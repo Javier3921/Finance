@@ -15,7 +15,20 @@ class Base(DeclarativeBase):
 
 
 def _make_engine(database_url: str):
-    connect_args = {"check_same_thread": False} if database_url.startswith("sqlite") else {}
+    if database_url.startswith("sqlite"):
+        connect_args = {"check_same_thread": False}
+    elif "pooler.supabase.com" in database_url:
+        # El *connection pooler* de Supabase en modo "Transaction" reutiliza
+        # la misma conexión física de Postgres para clientes distintos entre
+        # una transacción y otra — un prepared statement con nombre fijo
+        # (lo que hace psycopg3 por defecto) puede colisionar con el de otro
+        # cliente en esa misma conexión física ("prepared statement ...
+        # already exists"). `prepare_threshold=None` desactiva los prepared
+        # statements del lado del servidor, que es lo que Supabase recomienda
+        # para este modo de pooler.
+        connect_args = {"prepare_threshold": None}
+    else:
+        connect_args = {}
     return create_engine(database_url, connect_args=connect_args, future=True)
 
 
