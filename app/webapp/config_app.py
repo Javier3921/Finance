@@ -18,6 +18,7 @@ recién DESPUÉS, ya afuera, llamar a `st.rerun()`.
 from __future__ import annotations
 
 import datetime as dt
+import os
 import sys
 from pathlib import Path
 
@@ -32,6 +33,17 @@ import streamlit as st
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
+
+# En Streamlit Community Cloud, las variables de entorno se configuran como
+# "Secrets" (st.secrets), no como un .env real. `app.config` lee todo con
+# os.getenv(...), así que las volcamos a os.environ ANTES de importar nada
+# de `app` — en local esto no hace nada (st.secrets queda vacío si no existe
+# secrets.toml).
+try:
+    for _key, _value in st.secrets.items():
+        os.environ.setdefault(_key, str(_value))
+except Exception:
+    pass
 
 from app.db import get_session, init_db
 from app.services import budgets as budgets_service
