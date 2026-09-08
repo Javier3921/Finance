@@ -1,5 +1,6 @@
 .env
 *.db
+/credenciales/
 __pycache__/
 *.pyc
 .venv/
