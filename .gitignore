@@ -1,5 +1,10 @@
 .env
+.env.*
+!.env.example
 *.db
+*.key
+*.pem
+.streamlit/
 /credenciales/
 __pycache__/
 *.pyc
@@ -7,3 +12,5 @@ __pycache__/
 .pytest_cache/
 *.egg-info/
 /data/receipts/
+/CLAUDE.md
+/INFORME_DESPLIEGUE*.md

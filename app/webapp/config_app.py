@@ -45,6 +45,7 @@ try:
 except Exception:
     pass
 
+from app.config import settings
 from app.db import get_session, init_db
 from app.services import budgets as budgets_service
 from app.services import config as config_service
@@ -54,6 +55,35 @@ from app.services import transactions as transactions_service
 from app.services.users import get_default_user
 
 st.set_page_config(page_title="Finanzas — Configuración", page_icon="⚙️", layout="wide")
+
+
+def _require_password() -> None:
+    """Bloquea el resto del script hasta que se ingrese la contraseña
+    correcta. Falla cerrado: si DASHBOARD_PASSWORD no está configurado, la
+    app se niega a mostrar nada en vez de quedar abierta por accidente."""
+    if not settings.dashboard_password:
+        st.error(
+            "DASHBOARD_PASSWORD no está configurado (.env local o Secrets de "
+            "Streamlit Cloud). El panel no puede arrancar sin una contraseña definida."
+        )
+        st.stop()
+
+    if st.session_state.get("authenticated"):
+        return
+
+    st.title("🔒 Finanzas — Acceso")
+    password = st.text_input("Contraseña", type="password")
+    if st.button("Entrar"):
+        if password == settings.dashboard_password:
+            st.session_state["authenticated"] = True
+            st.rerun()
+        else:
+            st.error("Contraseña incorrecta")
+    st.stop()
+
+
+_require_password()
+
 init_db()
 
 MESES = [

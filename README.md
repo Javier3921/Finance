@@ -12,9 +12,9 @@ parser determinístico (palabras clave), no un modelo. Todo lo configurable
 umbrales de alerta) vive en la base de datos, nunca como constante en el
 código.
 
-**En proceso de despliegue en la nube** para que funcione 24/7 sin depender
-de que una PC esté encendida — ver el estado exacto (qué ya corre en la nube
-y qué falta) en [Despliegue en la nube](#despliegue-en-la-nube-estado-actual).
+**Desplegado en la nube y funcionando 24/7**, sin depender de que una PC esté
+encendida, a costo **S/0** — ver el detalle de la infraestructura en
+[Despliegue en la nube](#despliegue-en-la-nube-estado-actual).
 
 ## Arquitectura y stack
 
@@ -24,7 +24,7 @@ y qué falta) en [Despliegue en la nube](#despliegue-en-la-nube-estado-actual).
 | Base de datos | **Supabase Postgres** en producción / SQLite local (`finanzas.db`) solo para desarrollo | `DATABASE_URL` decide el motor sin tocar una línea de código — ver [Despliegue en la nube](#despliegue-en-la-nube-estado-actual) |
 | Fotos de comprobantes | **Supabase Storage** (bucket privado `receipts`), vía `app/services/storage.py` | El bot y el dashboard corren en máquinas distintas sin disco compartido; antes vivían en `data/receipts/` local |
 | Bot | `python-telegram-bot` v21 (polling) | No necesita dominio ni HTTPS público — corre como servicio en cualquier máquina con salida a internet |
-| Hosting del bot | Oracle Cloud Free Tier (VM "Always Free") — **pendiente** | Único componente que todavía no corre 24/7 en la nube; hoy sigue dependiendo de encenderlo manualmente |
+| Hosting del bot | Oracle Cloud Free Tier (VM "Always Free", Monterrey) | Corre 24/7 como servicio `systemd` (`Restart=always`), sin depender de ninguna PC |
 | Panel / dashboard | Streamlit, desplegado en **Streamlit Community Cloud** | Formularios y gráficos reales con poco código; se redeploya solo con cada `git push` a `main`, cero costo |
 | Gráficos | Altair (viene con Streamlit) | Sin dependencias nuevas |
 | Lenguaje natural | Regex + diccionario de palabras clave (`app/services/nlp.py`) | Gratis, instantáneo, 100% predecible — la IA se reserva para cuando de verdad aporte (OCR, fase 2) |
@@ -133,10 +133,10 @@ viceversa.
 
 ## Despliegue en la nube (estado actual)
 
-Objetivo: bot + dashboard corriendo 24/7 sin depender de que una PC esté
-encendida, costo **S/0**. Stack elegido: **Supabase** (Postgres + Storage) +
+Objetivo cumplido: bot + dashboard corriendo 24/7 sin depender de que una PC
+esté encendida, costo **S/0**. Stack: **Supabase** (Postgres + Storage) +
 **Streamlit Community Cloud** (dashboard) + **Oracle Cloud Free Tier** (VM
-"Always Free" para el bot) + repo **GitHub privado**.
+"Always Free" en Monterrey para el bot) + repo **GitHub privado**.
 
 | Pieza | Estado |
 |---|---|
@@ -144,8 +144,12 @@ encendida, costo **S/0**. Stack elegido: **Supabase** (Postgres + Storage) +
 | Base de datos (Supabase Postgres) | ✅ Proyecto creado, esquema migrado, datos históricos reales migrados 1:1 desde `finanzas.db` |
 | Fotos de comprobantes (Supabase Storage) | ✅ Bucket privado `receipts` creado, fotos históricas migradas |
 | Dashboard (Streamlit Community Cloud) | ✅ Desplegado y funcionando contra la Postgres de Supabase |
-| Bot de Telegram 24/7 (Oracle Cloud) | ⏳ **Pendiente** — hoy el bot solo corre si se enciende manualmente en una PC (`python -m app.bot.main`) |
-| Verificación end-to-end completa | ⏳ Pendiente (depende de tener el bot corriendo en Oracle) |
+| Bot de Telegram 24/7 (Oracle Cloud) | ✅ VM `finanzas-bot` (Monterrey, `A1.Flex` 1 OCPU/2 GB), servicio `systemd` `finanzas-bot.service` con `Restart=always` |
+| Verificación end-to-end completa | ✅ Un gasto registrado por Telegram aparece en el dashboard sin reiniciar nada |
+
+Detalle técnico completo del despliegue del bot (infraestructura, comandos
+de operación, incidencias encontradas y su solución): ver `CLAUDE.md` y
+`INFORME_DESPLIEGUE_BOT_2026-09-10.md` en la raíz del repo.
 
 Las credenciales reales (connection string de Supabase, `service_role` key,
 token de Telegram, etc.) están en `credenciales/CREDENCIALES.md` — una
@@ -166,6 +170,10 @@ desarrollando):
 - `app/webapp/config_app.py` vuelca `st.secrets` a `os.environ` al arrancar,
   porque Streamlit Cloud entrega la configuración como "Secrets" y
   `app/config.py` sigue leyendo todo con `os.getenv(...)`.
+- El dashboard exige una contraseña (`DASHBOARD_PASSWORD`) antes de mostrar
+  cualquier dato — sin ella, el panel se niega a arrancar. Necesario porque
+  Streamlit Community Cloud publica la app en una URL accesible por
+  cualquiera que la tenga.
 
 ## Cómo correrlo
 
@@ -184,7 +192,7 @@ python -m app.services.seed          # crea finanzas.db con categorías/métodos
 python -m pytest                     # 37 tests, no requieren token, internet ni Supabase
 
 python -m app.bot.main               # inicia el bot (requiere TELEGRAM_BOT_TOKEN en .env)
-streamlit run app/webapp/config_app.py   # abre el panel en el navegador
+streamlit run app/webapp/config_app.py   # abre el panel en el navegador (requiere DASHBOARD_PASSWORD en .env)
 ```
 
 `.env` nunca se sube a git (está en `.gitignore`); `.env.example` sí, y solo
@@ -192,12 +200,14 @@ debe tener valores de ejemplo/plantilla — **nunca pegar ahí un token real**.
 
 ### Producción (nube)
 
-- **Dashboard**: ya desplegado en Streamlit Community Cloud — cualquier
+- **Dashboard**: desplegado en Streamlit Community Cloud — cualquier
   `git push` a `main` lo redeploya solo, no requiere ninguna acción manual.
-- **Bot**: pendiente de desplegar en una VM de Oracle Cloud como servicio
-  `systemd` (`Restart=always`), apuntando al mismo `DATABASE_URL` de
-  Supabase que usa el dashboard. Ver `credenciales/CREDENCIALES.md` para los
-  valores exactos a usar en el `.env` de la VM.
+- **Bot**: corre 24/7 en una VM de Oracle Cloud como servicio `systemd`
+  (`Restart=always`), apuntando al mismo `DATABASE_URL` de Supabase que usa
+  el dashboard. Para actualizar el código: `cd ~/Finance && git pull && sudo
+  systemctl restart finanzas-bot` en la VM. Ver `CLAUDE.md` para los
+  comandos de operación y `credenciales/CREDENCIALES.md` para los valores
+  exactos del `.env`.
 
 ## Notas operativas importantes
 
@@ -237,24 +247,17 @@ debe tener valores de ejemplo/plantilla — **nunca pegar ahí un token real**.
   proyecto manualmente ahí. Mitigación futura: un ping periódico (ej.
   `JobQueue` de `python-telegram-bot` corriendo cada 24h) para mantener
   actividad constante.
-- **Contraseña de Postgres pendiente de rotar.** Quedó escrita en el
-  historial de una conversación de configuración — antes de considerar el
-  despliegue "terminado", rotarla desde Supabase (Database → Reset database
-  password) y actualizar `credenciales/CREDENCIALES.md` + los tres `.env`
-  (local, VM de Oracle, Secrets de Streamlit Cloud).
+- **Contraseña de Postgres**: ya rotada (2026-09-10) a una solo alfanumérica
+  y propagada a los tres entornos (local, VM de Oracle, Secrets de Streamlit
+  Cloud) — ver `INFORME_DESPLIEGUE_BOT_2026-09-10.md` §9.7.
 
 ## Qué falta / roadmap
 
-### Despliegue en la nube (en curso)
-- **Bot de Telegram en Oracle Cloud Free Tier**: crear la VM "Always Free" y
-  dejar el bot corriendo como servicio `systemd` — es el único componente
-  que todavía depende de una PC encendida. Ver la sección
-  [Despliegue en la nube](#despliegue-en-la-nube-estado-actual).
-- Verificación end-to-end completa (registrar un gasto por Telegram y
-  confirmar que aparece en el dashboard sin reiniciar nada) — pendiente
-  hasta que el bot esté corriendo en Oracle.
-- Rotar la contraseña de Postgres en Supabase (quedó escrita en una
-  conversación de configuración) y actualizar los tres `.env`/Secrets.
+### Remates del despliegue
+- **Confirmar que el bot sobrevive un reinicio de la VM** (`sudo reboot` y
+  verificar que `finanzas-bot` vuelve solo).
+- **Restringir el ingress SSH** de la VM de `0.0.0.0/0` a la IP del usuario
+  (hoy el puerto 22 está abierto a cualquier origen). Ver `CLAUDE.md`.
 
 ### Corto plazo
 - `preview/dashboard.html` sigue siendo un mockup con datos de ejemplo, no

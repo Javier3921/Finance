@@ -29,6 +29,7 @@ class Settings:
     supabase_url: str | None
     supabase_service_role_key: str | None
     supabase_receipts_bucket: str
+    dashboard_password: str | None
 
 
 def get_settings() -> Settings:
@@ -40,6 +41,7 @@ def get_settings() -> Settings:
         supabase_url=os.getenv("SUPABASE_URL") or None,
         supabase_service_role_key=os.getenv("SUPABASE_SERVICE_ROLE_KEY") or None,
         supabase_receipts_bucket=os.getenv("SUPABASE_RECEIPTS_BUCKET", "receipts"),
+        dashboard_password=os.getenv("DASHBOARD_PASSWORD") or None,
     )
 
 
