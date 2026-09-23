@@ -18,6 +18,12 @@ def test_parses_relative_date_ayer():
     assert parsed.date == today - dt.timedelta(days=1)
 
 
+def test_parses_relative_date_anteayer():
+    today = dt.date(2026, 9, 5)
+    parsed = parse_expense_text("anteayer gasté 20 en cena", today=today)
+    assert parsed.date == today - dt.timedelta(days=2)
+
+
 def test_no_amount_returns_none():
     assert parse_expense_text("hola, como estas?") is None
 

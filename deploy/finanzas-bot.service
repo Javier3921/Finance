@@ -1,0 +1,22 @@
+# Unidad systemd de referencia para el bot de Telegram.
+# Copiar a /etc/systemd/system/finanzas-bot.service y ajustar User y rutas
+# si el repo no está clonado en /home/ubuntu/Finance.
+# El .env se carga desde WorkingDirectory (app/config.py usa python-dotenv),
+# así que no hace falta EnvironmentFile.
+
+[Unit]
+Description=Finanzas_Gestor Telegram bot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/home/ubuntu/Finance
+ExecStart=/home/ubuntu/Finance/.venv/bin/python -m app.bot.main
+Restart=always
+RestartSec=5
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=multi-user.target

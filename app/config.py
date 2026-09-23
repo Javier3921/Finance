@@ -30,6 +30,20 @@ class Settings:
     supabase_service_role_key: str | None
     supabase_receipts_bucket: str
     dashboard_password: str | None
+    allowed_chat_ids: frozenset[int]
+
+
+def parse_chat_ids(raw: str | None) -> frozenset[int]:
+    """"123, -456" -> {123, -456}. Vacío o None -> conjunto vacío (el bot
+    no atiende a nadie, ver `app/bot/access.py`)."""
+    if not raw:
+        return frozenset()
+    try:
+        return frozenset(int(part) for part in raw.replace(" ", "").split(",") if part)
+    except ValueError:
+        raise ValueError(
+            f"ALLOWED_CHAT_IDS inválido: {raw!r}. Debe ser una lista de números separados por coma."
+        ) from None
 
 
 def get_settings() -> Settings:
@@ -42,6 +56,7 @@ def get_settings() -> Settings:
         supabase_service_role_key=os.getenv("SUPABASE_SERVICE_ROLE_KEY") or None,
         supabase_receipts_bucket=os.getenv("SUPABASE_RECEIPTS_BUCKET", "receipts"),
         dashboard_password=os.getenv("DASHBOARD_PASSWORD") or None,
+        allowed_chat_ids=parse_chat_ids(os.getenv("ALLOWED_CHAT_IDS")),
     )
 
 

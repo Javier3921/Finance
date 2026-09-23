@@ -18,7 +18,7 @@ from app.db import get_session, init_db
 from app.models import BudgetPeriod, Category, PaymentMethod, Subcategory, User
 from app.services.settings import seed_defaults_from_env
 
-DEFAULT_USER_NAME = "Javier"
+DEFAULT_USER_NAME = "Usuario"  # solo si la base está vacía; editable después
 
 # (categoría, [subcategorías], presupuesto mensual de la categoría)
 DEFAULT_CATEGORIES: list[tuple[str, list[str], float]] = [
@@ -40,7 +40,9 @@ def seed() -> None:
     today = dt.date.today()
 
     with get_session() as session:
-        user = session.scalar(select(User).where(User.name == DEFAULT_USER_NAME))
+        # Sistema de un solo usuario: se reutiliza el existente (sea cual sea
+        # su nombre) para que volver a correr el seed nunca cree un segundo.
+        user = session.scalar(select(User).order_by(User.id).limit(1))
         if user is None:
             user = User(name=DEFAULT_USER_NAME, currency="PEN")
             session.add(user)
@@ -71,7 +73,9 @@ def seed() -> None:
         session.flush()
         seed_defaults_from_env(session, user.id, monthly_income=app_settings.monthly_income)
 
-    print(f"Listo. Usuario '{DEFAULT_USER_NAME}' con categorías, métodos de pago y presupuestos de "
+        user_name = user.name
+
+    print(f"Listo. Usuario '{user_name}' con categorías, métodos de pago y presupuestos de "
           f"{today.strftime('%B %Y')} sembrados (o ya existentes).")
 
 

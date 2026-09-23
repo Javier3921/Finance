@@ -1,288 +1,186 @@
 # Finanzas_Gestor
 
-Gestor financiero personal (gastos fijos/variables, presupuestos configurables,
-ahorros e inversiones) operado principalmente vía un **bot de Telegram**, con
-un **panel de configuración y dashboard** (Streamlit) para todo lo que no
-tiene sentido hacer por chat.
+**Gestor financiero personal operado desde Telegram, con dashboard web y
+desplegado 24/7 en la nube a costo cero.**
 
-Diseñado para un solo usuario, costo **S/0** (Postgres + Storage de Supabase,
-capas gratuitas), sin IA todavía — el registro por lenguaje natural usa un
-parser determinístico (palabras clave), no un modelo. Todo lo configurable
-(categorías, subcategorías, presupuestos, métodos de pago, ingreso mensual,
-umbrales de alerta) vive en la base de datos, nunca como constante en el
-código.
+Registrar un gasto es tan simple como escribirle al bot *"gasté 35 en
+almuerzo"* o mandarle la foto del comprobante. Todo queda en una base de
+datos Postgres, y un dashboard web muestra en qué se va el dinero, cómo va
+cada presupuesto del mes y la galería de comprobantes.
 
-**Desplegado en la nube y funcionando 24/7**, sin depender de que una PC esté
-encendida, a costo **S/0** — ver el detalle de la infraestructura en
-[Despliegue en la nube](#despliegue-en-la-nube-estado-actual).
+![Python](https://img.shields.io/badge/Python-3.10%20%7C%203.12-3776AB?logo=python&logoColor=white)
+![SQLAlchemy](https://img.shields.io/badge/SQLAlchemy-2.0-D71F00)
+![Telegram](https://img.shields.io/badge/python--telegram--bot-21-26A5E4?logo=telegram&logoColor=white)
+![Streamlit](https://img.shields.io/badge/Streamlit-dashboard-FF4B4B?logo=streamlit&logoColor=white)
+![Supabase](https://img.shields.io/badge/Supabase-Postgres%20%2B%20Storage-3ECF8E?logo=supabase&logoColor=white)
+![Oracle Cloud](https://img.shields.io/badge/Oracle%20Cloud-Always%20Free-F80000?logo=oracle&logoColor=white)
+![Tests](https://img.shields.io/badge/tests-42%20passing-2EA44F)
 
-## Arquitectura y stack
+---
 
-| Pieza | Tecnología | Por qué |
+## ¿Qué hace?
+
+| | Funcionalidad |
+|---|---|
+| 💬 | **Registro por lenguaje natural** — "gasté 35 en almuerzo ayer" → monto, categoría, subcategoría y fecha, sin IA (parser determinístico). |
+| 📸 | **Registro con foto de comprobante** — la foto se guarda en un bucket privado y queda enlazada al movimiento. |
+| 🧭 | **Flujo guiado con botones** (`/gasto`) — tipo → categoría → subcategoría → monto → confirmar. |
+| 📊 | **Presupuestos por categoría y subcategoría** con alertas por umbral (aviso / alerta / excedido) e historial que nunca reescribe meses pasados. |
+| 📈 | **Dashboard web** — KPIs, gasto por categoría, fijo vs. variable, evolución en el tiempo, galería de comprobantes. |
+| ⚙️ | **Todo configurable sin tocar código** — categorías, presupuestos, métodos de pago, ingreso mensual y umbrales viven en la base de datos. |
+| 🔒 | **Bot restringido a chats autorizados**, dashboard protegido con contraseña, bucket de fotos privado, base de datos con rol de mínimo privilegio y RLS. |
+
+## Arquitectura en un vistazo
+
+```mermaid
+flowchart LR
+    U(["👤 Usuario"])
+
+    subgraph TG["Telegram"]
+        API["Bot API"]
+    end
+
+    subgraph OCI["Oracle Cloud · VM Always Free"]
+        BOT["Bot<br/>python-telegram-bot<br/>(systemd)"]
+    end
+
+    subgraph ST["Streamlit Community Cloud"]
+        WEB["Dashboard<br/>Streamlit + Altair"]
+    end
+
+    subgraph CORE["Capa de negocio compartida · app/services"]
+        SVC["transactions · budgets · nlp<br/>config · settings · storage"]
+    end
+
+    subgraph SB["Supabase"]
+        PG[("Postgres<br/>pooler · Transaction")]
+        S3[["Storage<br/>bucket privado 'receipts'"]]
+    end
+
+    GH["GitHub"]
+
+    U -- "mensajes / fotos" --> API
+    API <-- "long polling" --> BOT
+    U -- "navegador + contraseña" --> WEB
+    BOT --> SVC
+    WEB --> SVC
+    SVC -- "SQLAlchemy + psycopg 3" --> PG
+    SVC -- "supabase-py" --> S3
+    GH -- "git push → redeploy automático" --> WEB
+    GH -- "git pull + systemctl restart" --> BOT
+```
+
+Dos procesos independientes (bot y dashboard) en proveedores distintos que
+comparten **la misma capa de servicios** y **la misma base de datos**: un
+gasto registrado por Telegram aparece en el dashboard al instante, y un
+presupuesto editado en el dashboard lo usa el bot en el siguiente mensaje.
+
+## Stack tecnológico
+
+| Capa | Tecnología | Por qué |
 |---|---|---|
-| Backend / lógica de negocio | Python + SQLAlchemy 2.0 | Tipado, testeable, sin depender de Telegram ni Streamlit |
-| Base de datos | **Supabase Postgres** en producción / SQLite local (`finanzas.db`) solo para desarrollo | `DATABASE_URL` decide el motor sin tocar una línea de código — ver [Despliegue en la nube](#despliegue-en-la-nube-estado-actual) |
-| Fotos de comprobantes | **Supabase Storage** (bucket privado `receipts`), vía `app/services/storage.py` | El bot y el dashboard corren en máquinas distintas sin disco compartido; antes vivían en `data/receipts/` local |
-| Bot | `python-telegram-bot` v21 (polling) | No necesita dominio ni HTTPS público — corre como servicio en cualquier máquina con salida a internet |
-| Hosting del bot | Oracle Cloud Free Tier (VM "Always Free", Monterrey) | Corre 24/7 como servicio `systemd` (`Restart=always`), sin depender de ninguna PC |
-| Panel / dashboard | Streamlit, desplegado en **Streamlit Community Cloud** | Formularios y gráficos reales con poco código; se redeploya solo con cada `git push` a `main`, cero costo |
-| Gráficos | Altair (viene con Streamlit) | Sin dependencias nuevas |
-| Lenguaje natural | Regex + diccionario de palabras clave (`app/services/nlp.py`) | Gratis, instantáneo, 100% predecible — la IA se reserva para cuando de verdad aporte (OCR, fase 2) |
-| Tests | pytest sobre SQLite en memoria | No dependen de token, internet, ni de Supabase |
+| Lógica de negocio | Python + SQLAlchemy 2.0 (tipado declarativo) | Independiente de la interfaz; testeable sin red |
+| Base de datos | Supabase Postgres (prod) · SQLite (dev/tests) | `DATABASE_URL` cambia el motor sin tocar código |
+| Archivos | Supabase Storage (bucket privado + URLs firmadas) | Bot y dashboard no comparten disco |
+| Bot | `python-telegram-bot` v21, modo *polling* | Sin dominio, sin HTTPS, sin puertos de entrada |
+| Hosting del bot | Oracle Cloud Always Free (ARM Ampere A1) + `systemd` | 24/7, reinicio automático, S/0 |
+| Dashboard | Streamlit + Altair + pandas en Streamlit Community Cloud | Redeploy automático en cada `git push` |
+| Lenguaje natural | Regex + diccionario de palabras clave | Gratis, instantáneo y 100 % predecible |
+| Tests | pytest sobre SQLite en memoria | 42 tests, sin token, sin internet, sin Supabase |
+
+## Documentación
+
+| Documento | Contenido |
+|---|---|
+| 📘 [**Análisis técnico**](docs/ANALISIS_TECNICO.md) | Objetivos, arquitectura, modelo de datos (ER), flujos del bot (diagramas de secuencia y estados), algoritmos de presupuesto, decisiones de diseño, seguridad, retos técnicos resueltos y roadmap. |
+| 🚀 [**Guía de despliegue**](docs/DESPLIEGUE.md) | Paso a paso para reproducir el despliegue completo: Supabase, Oracle Cloud + `systemd`, Streamlit Community Cloud. |
+| 🎨 [`preview/dashboard.html`](preview/dashboard.html) | Mockup visual del dashboard con datos de ejemplo (se abre directo en el navegador). |
 
 ## Estructura del proyecto
 
 ```
-Finanzas_Gestor/
-├── app/
-│   ├── config.py              # lee .env (DATABASE_URL, TELEGRAM_BOT_TOKEN, etc.)
-│   ├── db.py                  # motor SQLAlchemy + migraciones ligeras a mano
-│   ├── models.py               # esquema completo (ver "Modelo de datos" abajo)
-│   ├── services/                # lógica de negocio, sin nada de Telegram/Streamlit adentro
-│   │   ├── transactions.py      # alta/consulta de movimientos
-│   │   ├── budgets.py           # presupuesto vs. gastado, umbrales, prorrateo
-│   │   ├── config.py             # CRUD de categorías/subcategorías/métodos/presupuestos
-│   │   ├── settings.py           # ajustes editables (ingreso mensual, umbrales)
-│   │   ├── nlp.py                # parser de lenguaje natural
-│   │   ├── seed.py               # datos iniciales
-│   │   ├── storage.py            # fotos de comprobantes en Supabase Storage (bucket privado)
-│   │   └── users.py              # resolución de usuario (chat de Telegram -> user_id)
-│   ├── bot/
-│   │   ├── main.py                # arma la Application y registra los handlers
-│   │   ├── formatting.py          # helpers de mensajes (montos, líneas de presupuesto)
-│   │   └── handlers/
-│   │       ├── expense_flow.py     # /gasto: flujo guiado paso a paso
-│   │       ├── natural_language.py # registro por texto libre
-│   │       ├── receipt.py          # registro con foto de comprobante
-│   │       └── summary.py          # /start, /presupuesto, /resumen
-│   └── webapp/
-│       └── config_app.py          # panel Streamlit: dashboard + toda la configuración
-├── tests/                          # 37 tests (pytest)
-├── preview/dashboard.html          # mockup visual con datos de ejemplo (NO conectado a la BD real)
-├── data/receipts/<user_id>/        # legado: fotos guardadas en disco ANTES de migrar a Supabase Storage
-├── credenciales/                   # NO se sube a git — credenciales reales (Supabase, GitHub PAT, etc.)
-├── runtime.txt                     # fija la versión de Python para Streamlit Community Cloud
-├── .env / .env.example
-└── requirements.txt
+app/
+├── config.py              # configuración desde variables de entorno
+├── db.py                  # motor SQLAlchemy, sesión y migraciones ligeras
+├── models.py              # esquema completo (10 tablas)
+├── services/              # lógica de negocio pura (sin Telegram ni Streamlit)
+│   ├── transactions.py    #   alta y consulta de movimientos
+│   ├── budgets.py         #   presupuesto vs. gastado, umbrales, prorrateo
+│   ├── config.py          #   CRUD de categorías, subcategorías, métodos, presupuestos
+│   ├── settings.py        #   ajustes clave-valor (ingreso, umbrales)
+│   ├── nlp.py             #   parser de lenguaje natural
+│   ├── storage.py         #   fotos en Supabase Storage
+│   ├── users.py           #   chat de Telegram → usuario
+│   └── seed.py            #   datos iniciales
+├── bot/
+│   ├── main.py            # arma la Application y registra handlers
+│   ├── access.py          # lista blanca de chats (ALLOWED_CHAT_IDS)
+│   ├── formatting.py
+│   └── handlers/          # /gasto, texto libre, fotos, /presupuesto, /resumen
+└── webapp/
+    └── config_app.py      # dashboard + panel de configuración (Streamlit)
+tests/                     # 42 tests (pytest)
+deploy/finanzas-bot.service  # unidad systemd de referencia para el bot
+docs/                      # análisis técnico y guía de despliegue
+preview/dashboard.html     # mockup visual
 ```
 
-## Modelo de datos (resumen)
+## Correrlo en local
 
-- **User** — uno solo por ahora, pero cada tabla ya tiene `user_id` para no
-  tener que rediseñar nada si el sistema se vuelve multiusuario.
-- **Category / Subcategory** — se desactivan o se eliminan (nunca se pierden
-  en cascada si tienen movimientos: eliminar está bloqueado en ese caso).
-- **PaymentMethod**.
-- **BudgetPeriod** — presupuesto de una categoría (o subcategoría)
-  *"carry-forward"*: solo se guarda una fila cuando el monto cambia, y aplica
-  desde ese mes en adelante hasta que se vuelva a cambiar. Los meses pasados
-  nunca se reescriben.
-- **Transaction** — gasto/ahorro/inversión. Campos: tipo, categoría,
-  subcategoría, monto, moneda, fecha, método de pago, comercio,
-  `receipt_path` (foto), origen (`manual` / `bot_texto` / `bot_foto`).
-- **TransactionItem** — desglose opcional de una transacción (ej. "Compra de
-  tecnología" → Celular + Audífonos).
-- **RecurringExpense** — modelo listo para gastos fijos recurrentes; **el job
-  que genera el borrador mensual todavía no está implementado** (ver
-  "Qué falta").
-- **Setting** — clave/valor por usuario: ingreso mensual, umbrales de
-  aviso/alerta/excedido. Editable desde el panel, nunca hay que tocar código
-  para cambiarlos.
-
-## Funcionalidades implementadas
-
-### Bot de Telegram
-- `/start`, `/presupuesto` (estado del mes por categoría), `/resumen`.
-- `/gasto` — flujo guiado con botones: tipo (fijo/variable) → categoría →
-  subcategoría → monto → confirmar.
-- **Registro por texto libre** ("gasté 35 en almuerzo") — reconoce monto,
-  categoría/subcategoría por palabra clave y fecha relativa (hoy/ayer); si no
-  reconoce la categoría, la pregunta por botones en vez de adivinar.
-- **Registro con foto de comprobante**:
-  - Con pie de foto (ej. "35 en almuerzo"): usa el mismo parser de texto libre.
-  - Sin pie de foto: flujo 100% guiado por botones — categoría → subcategoría
-    (con opción de crear una nueva ahí mismo) → monto → confirmar. Nunca
-    adivina la categoría a partir de una respuesta de texto.
-  - La foto se sube al bucket privado de Supabase Storage (`app/services/storage.py`)
-    y queda enlazada al movimiento (`receipt_path` guarda la key dentro del bucket).
-  - Una subcategoría creada al vuelo desde el bot **no** tiene presupuesto
-    propio — no dispara ninguna alerta hasta que se le asigne uno desde el
-    panel.
-
-### Panel de configuración y dashboard (Streamlit)
-- **Dashboard** — KPIs (total, fijo, variable, promedio diario), gasto por
-  categoría (barras o pastel, a elección), fijo vs. variable (pastel),
-  evolución en el tiempo (línea, agrupada por día/mes/año según el largo del
-  rango), tabla de movimientos. Selector de rango: Hoy / Esta semana / Este
-  mes / Este año / personalizado.
-- **Categorías y subcategorías** — crear, renombrar, activar/desactivar,
-  **eliminar** (bloqueado si tiene movimientos — ahí solo se puede
-  desactivar), mover una subcategoría a otra categoría.
-- **Comprobantes** — galería de fotos de gastos registrados con foto,
-  filtrable por categoría, subcategoría y rango de fechas.
-- **Presupuestos** — por categoría y por subcategoría (independientes entre
-  sí), con historial completo y prorrateo para rangos que no son un mes
-  calendario completo.
-- **Métodos de pago** — crear, activar/desactivar.
-- **Ajustes generales** — ingreso mensual y los tres umbrales de alerta de
-  presupuesto (aviso/alerta/excedido).
-
-Todo lo anterior queda guardado en la base de datos real: un cambio hecho en
-el panel se refleja de inmediato la próxima vez que se hable con el bot, y
-viceversa.
-
-## Despliegue en la nube (estado actual)
-
-Objetivo cumplido: bot + dashboard corriendo 24/7 sin depender de que una PC
-esté encendida, costo **S/0**. Stack: **Supabase** (Postgres + Storage) +
-**Streamlit Community Cloud** (dashboard) + **Oracle Cloud Free Tier** (VM
-"Always Free" en Monterrey para el bot) + repo **GitHub privado**.
-
-| Pieza | Estado |
-|---|---|
-| Repo GitHub privado | ✅ [`Javier3921/Finance`](https://github.com/Javier3921/Finance) |
-| Base de datos (Supabase Postgres) | ✅ Proyecto creado, esquema migrado, datos históricos reales migrados 1:1 desde `finanzas.db` |
-| Fotos de comprobantes (Supabase Storage) | ✅ Bucket privado `receipts` creado, fotos históricas migradas |
-| Dashboard (Streamlit Community Cloud) | ✅ Desplegado y funcionando contra la Postgres de Supabase |
-| Bot de Telegram 24/7 (Oracle Cloud) | ✅ VM `finanzas-bot` (Monterrey, `A1.Flex` 1 OCPU/2 GB), servicio `systemd` `finanzas-bot.service` con `Restart=always` |
-| Verificación end-to-end completa | ✅ Un gasto registrado por Telegram aparece en el dashboard sin reiniciar nada |
-
-Detalle técnico completo del despliegue del bot (infraestructura, comandos
-de operación, incidencias encontradas y su solución): ver `CLAUDE.md` y
-`INFORME_DESPLIEGUE_BOT_2026-09-10.md` en la raíz del repo.
-
-Las credenciales reales (connection string de Supabase, `service_role` key,
-token de Telegram, etc.) están en `credenciales/CREDENCIALES.md` — una
-carpeta local que **nunca se sube a git** (ver `.gitignore`). Esa es la
-fuente de verdad para reconfigurar cualquiera de los tres entornos (local,
-VM de Oracle, Secrets de Streamlit Cloud) si hace falta.
-
-**Cambios de código que hizo posible este stack** (relevante si se sigue
-desarrollando):
-- `app/db.py::_make_engine()` agrega `connect_args={"prepare_threshold":
-  None}` cuando `DATABASE_URL` usa el *connection pooler* de Supabase — sin
-  esto, la segunda consulta contra Postgres falla con "prepared statement
-  already exists" (el pooler en modo "Transaction" no soporta prepared
-  statements con nombre fijo de psycopg3).
-- `runtime.txt` fija Python 3.12 para Streamlit Community Cloud — por
-  defecto usa Python 3.14, donde `altair` 5.5 falla al importar
-  (incompatibilidad con `TypedDict`).
-- `app/webapp/config_app.py` vuelca `st.secrets` a `os.environ` al arrancar,
-  porque Streamlit Cloud entrega la configuración como "Secrets" y
-  `app/config.py` sigue leyendo todo con `os.getenv(...)`.
-- El dashboard exige una contraseña (`DASHBOARD_PASSWORD`) antes de mostrar
-  cualquier dato — sin ella, el panel se niega a arrancar. Necesario porque
-  Streamlit Community Cloud publica la app en una URL accesible por
-  cualquiera que la tenga.
-
-## Cómo correrlo
-
-### Desarrollo local (SQLite, sin depender de ninguna cuenta externa)
+Requiere Python 3.10+. En desarrollo usa SQLite: no hace falta ninguna
+cuenta externa salvo un bot de Telegram propio.
 
 ```bash
 python -m venv .venv
-.venv\Scripts\activate               # Windows
+.venv\Scripts\activate            # Windows  (Linux/macOS: source .venv/bin/activate)
 pip install -r requirements.txt
 
-copy .env.example .env               # y completar TELEGRAM_BOT_TOKEN (crear uno con @BotFather)
-# Para desarrollo local, dejar DATABASE_URL=sqlite:///./finanzas.db (valor por defecto).
-# Las variables SUPABASE_* solo son necesarias si este .env va a apuntar a producción.
+cp .env.example .env              # completar TELEGRAM_BOT_TOKEN y DASHBOARD_PASSWORD
 
-python -m app.services.seed          # crea finanzas.db con categorías/métodos/presupuestos iniciales
-python -m pytest                     # 37 tests, no requieren token, internet ni Supabase
+python -m app.services.seed       # crea finanzas.db con datos iniciales
+python -m pytest                  # 42 tests
 
-python -m app.bot.main               # inicia el bot (requiere TELEGRAM_BOT_TOKEN en .env)
-streamlit run app/webapp/config_app.py   # abre el panel en el navegador (requiere DASHBOARD_PASSWORD en .env)
+python -m app.bot.main                    # bot
+streamlit run app/webapp/config_app.py    # dashboard en http://localhost:8501
 ```
 
-`.env` nunca se sube a git (está en `.gitignore`); `.env.example` sí, y solo
-debe tener valores de ejemplo/plantilla — **nunca pegar ahí un token real**.
+**Autorizar tu chat:** la primera vez, con `ALLOWED_CHAT_IDS` vacío, el bot
+no registra nada y te responde con tu `chat_id`. Cópialo en `.env`
+(`ALLOWED_CHAT_IDS=<tu_chat_id>`) y reinicia el bot. A partir de ahí, los
+mensajes de cualquier otro chat se ignoran.
 
-### Producción (nube)
+> Las fotos de comprobantes requieren `SUPABASE_URL` y
+> `SUPABASE_SERVICE_ROLE_KEY`; el resto funciona sin Supabase.
 
-- **Dashboard**: desplegado en Streamlit Community Cloud — cualquier
-  `git push` a `main` lo redeploya solo, no requiere ninguna acción manual.
-- **Bot**: corre 24/7 en una VM de Oracle Cloud como servicio `systemd`
-  (`Restart=always`), apuntando al mismo `DATABASE_URL` de Supabase que usa
-  el dashboard. Para actualizar el código: `cd ~/Finance && git pull && sudo
-  systemctl restart finanzas-bot` en la VM. Ver `CLAUDE.md` para los
-  comandos de operación y `credenciales/CREDENCIALES.md` para los valores
-  exactos del `.env`.
+## Usar este proyecto como base
 
-## Notas operativas importantes
+El repositorio está pensado para que puedas montar **tu propio gestor**.
+Haz un fork o descárgalo, crea tu propio bot con @BotFather y tus propias
+cuentas gratuitas, y sigue la [guía de despliegue](docs/DESPLIEGUE.md).
+Ningún dato ni credencial de este proyecto viaja con el código: cada
+instancia usa su propia base de datos y solo responde a los chats de su
+`ALLOWED_CHAT_IDS`.
 
-- **El bot no tiene recarga automática.** Cualquier cambio en `app/bot/` o en
-  los `services/` que usa requiere **reiniciar el proceso** para que se
-  aplique:
-  - En local: volver a correr `python -m app.bot.main`.
-  - Una vez desplegado en Oracle Cloud: `git pull && sudo systemctl restart
-    finanzas-bot` en la VM.
-- **Cuidado con procesos duplicados.** Si se reinicia el bot varias veces sin
-  matar bien el proceso anterior, Telegram sigue recibiendo respuestas del
-  proceso viejo (con código desactualizado) de forma intermitente.
-  - En Windows (desarrollo local), verificar por PID exacto, no por nombre de
-    imagen:
-    ```bash
-    powershell -Command "Get-CimInstance Win32_Process -Filter \"CommandLine like '%app.bot.main%'\" | Select-Object ProcessId, CommandLine"
-    ```
-  - En la VM de Oracle esto no debería pasar nunca: el bot corre como
-    servicio `systemd` (`Restart=always`), que garantiza un único proceso
-    administrado por PID.
-- **Dashboard en Streamlit Community Cloud**: se redeploya solo con cada
-  `git push` a `main` — no hace falta reiniciar nada a mano. Logs: "Manage
-  app" → "Logs" en share.streamlit.io.
-- **Bot en la VM de Oracle**: logs con `sudo journalctl -u finanzas-bot -f`.
-- **Migraciones de base de datos.** Todavía no hay Alembic. Cuando se agrega
-  una columna a un modelo, `app/db.py::init_db()` la agrega sola a la base
-  existente (`ALTER TABLE ... ADD COLUMN`) la próxima vez que se llame —
-  funciona igual en SQLite que en Postgres (SQL ANSI), pero tampoco soporta
-  renombrar ni borrar columnas.
-- El panel de Streamlit y el bot son **procesos independientes** — reiniciar
-  uno no afecta al otro. Ambos comparten la misma base de datos (Supabase en
-  producción), así que un cambio hecho en uno se ve de inmediato en el otro.
-- **Riesgo: Supabase puede pausar el proyecto por inactividad.** El tier
-  gratuito pausa la base de datos si no recibe ninguna consulta durante
-  varios días seguidos — si el bot o el dashboard dejan de responder tras un
-  período largo sin uso, revisar el dashboard de Supabase y reactivar el
-  proyecto manualmente ahí. Mitigación futura: un ping periódico (ej.
-  `JobQueue` de `python-telegram-bot` corriendo cada 24h) para mantener
-  actividad constante.
-- **Contraseña de Postgres**: ya rotada (2026-09-10) a una solo alfanumérica
-  y propagada a los tres entornos (local, VM de Oracle, Secrets de Streamlit
-  Cloud) — ver `INFORME_DESPLIEGUE_BOT_2026-09-10.md` §9.7.
+Lo que conviene adaptar:
 
-## Qué falta / roadmap
+| Qué | Dónde |
+|---|---|
+| Categorías, subcategorías, presupuestos y métodos de pago iniciales | `app/services/seed.py` (después se editan desde el dashboard) |
+| Palabras clave del registro por texto libre ("almuerzo" → Comida) | `_KEYWORDS` en `app/services/nlp.py`, deben coincidir con los nombres de tus categorías |
+| Moneda | `DEFAULT_CURRENCY` en `.env`; los textos del bot y del parser asumen soles (`S/`) |
+| Ingreso mensual inicial | `MONTHLY_INCOME` en `.env` (después se edita desde el dashboard) |
+| Zona horaria (define qué es "hoy") | La del servidor: `timedatectl set-timezone` en la VM |
 
-### Remates del despliegue
-- **Confirmar que el bot sobrevive un reinicio de la VM** (`sudo reboot` y
-  verificar que `finanzas-bot` vuelve solo).
-- **Restringir el ingress SSH** de la VM de `0.0.0.0/0` a la IP del usuario
-  (hoy el puerto 22 está abierto a cualquier origen). Ver `CLAUDE.md`.
+## Estado
 
-### Corto plazo
-- `preview/dashboard.html` sigue siendo un mockup con datos de ejemplo, no
-  conectado a la base de datos real (el Dashboard de verdad ya vive en el
-  panel de Streamlit).
-- El registro por texto libre y por foto siempre guarda el gasto como
-  **"variable"**, nunca "fijo" — no lo infiere ni lo pregunta. Si se quiere
-  que categorías como "Gastos Fijos" se marquen como fijo automáticamente,
-  falta esa lógica.
-- **Gastos recurrentes**: el modelo (`RecurringExpense`) ya existe, pero
-  falta el job que genere el borrador mensual pendiente de confirmación (o
-  lo registre automáticamente, según se decida).
-- `/ahorro` e `/inversion` no existen todavía como comandos del bot (el
-  modelo de datos ya soporta esos tipos de movimiento).
+✅ En producción y funcionando 24/7 (bot en Oracle Cloud, dashboard en
+Streamlit Community Cloud, datos en Supabase), costo mensual **S/0**.
 
-### Fase 2
-- OCR/IA para leer monto/comercio/fecha directo de la foto del comprobante
-  (evaluado: Google Gemini free tier, por ser gratuito y soportar visión) —
-  reemplazaría el "¿cuánto fue?" manual sin cambiar el resto del flujo.
-- Alembic para migraciones versionadas de la base de datos.
-- Multiusuario real (login) — el esquema ya está preparado (`user_id` en
-  todas las tablas), falta la capa de autenticación.
+Próximos pasos: gastos recurrentes automáticos, comandos `/ahorro` e
+`/inversion`, OCR del comprobante y migraciones versionadas con Alembic —
+detalle en el [roadmap](docs/ANALISIS_TECNICO.md#12-limitaciones-y-roadmap).
 
-### Fase 3
-- Análisis financiero automatizado (comparaciones mes a mes, detección de
-  anomalías, proyecciones de fin de mes).
-- Notificaciones proactivas del bot (resumen semanal, alertas de presupuesto
-  sin que el usuario tenga que preguntar).
+## Licencia
+
+[MIT](LICENSE): puedes usar, modificar y distribuir el código libremente,
+manteniendo el aviso de copyright.

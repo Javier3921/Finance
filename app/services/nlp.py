@@ -83,10 +83,11 @@ def parse_expense_text(text: str, *, today: dt.date | None = None) -> ParsedExpe
             category, subcategory, matched_keyword = cat, subcat, keyword
             break
 
-    if "ayer" in normalized:
-        date = today - dt.timedelta(days=1)
-    elif "anteayer" in normalized:
+    # "anteayer" primero: contiene "ayer" y, al revés, nunca se alcanzaría.
+    if "anteayer" in normalized:
         date = today - dt.timedelta(days=2)
+    elif "ayer" in normalized:
+        date = today - dt.timedelta(days=1)
     else:
         date = today  # "hoy" o sin referencia explícita: se asume el día de hoy
 
