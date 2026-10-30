@@ -51,7 +51,13 @@ def rename_category(session: Session, category_id: int, new_name: str) -> Catego
     category = session.get(Category, category_id)
     if category is None:
         raise ConfigError("Categoría no encontrada")
-    category.name = _norm(new_name)
+    name = _norm(new_name)
+    if not name:
+        raise ConfigError("El nombre de la categoría no puede estar vacío")
+    otras = [c for c in list_categories(session, category.user_id, include_inactive=True) if c.id != category_id]
+    if any(c.name.lower() == name.lower() for c in otras):
+        raise ConfigError(f"Ya existe una categoría llamada '{name}'")
+    category.name = name
     return category
 
 
@@ -116,7 +122,13 @@ def rename_subcategory(session: Session, subcategory_id: int, new_name: str) -> 
     subcategory = session.get(Subcategory, subcategory_id)
     if subcategory is None:
         raise ConfigError("Subcategoría no encontrada")
-    subcategory.name = _norm(new_name)
+    name = _norm(new_name)
+    if not name:
+        raise ConfigError("El nombre de la subcategoría no puede estar vacío")
+    otras = [s for s in list_subcategories(session, subcategory.category_id, include_inactive=True) if s.id != subcategory_id]
+    if any(s.name.lower() == name.lower() for s in otras):
+        raise ConfigError(f"Ya existe una subcategoría llamada '{name}' en esta categoría")
+    subcategory.name = name
     return subcategory
 
 
@@ -197,6 +209,14 @@ def set_budget(
     amount = Decimal(str(amount))
     if amount < 0:
         raise ConfigError("El presupuesto no puede ser negativo")
+    if not 1 <= month <= 12:
+        raise ConfigError(f"El mes debe estar entre 1 y 12 (llegó {month})")
+    if session.get(Category, category_id) is None:
+        raise ConfigError("La categoría no existe")
+    if subcategory_id is not None:
+        sub = session.get(Subcategory, subcategory_id)
+        if sub is None or sub.category_id != category_id:
+            raise ConfigError("La subcategoría no pertenece a esa categoría")
     row = session.scalar(
         select(BudgetPeriod).where(
             BudgetPeriod.category_id == category_id,

@@ -5,7 +5,7 @@ from decimal import Decimal
 
 from app.services.budgets import CategoryBudgetStatus
 
-STATUS_LABEL = {"bien": "En rango", "aviso": "Aviso", "alerta": "Alerta", "excedido": "Excedido"}
+STATUS_LABEL = {"bien": "En rango", "aviso": "Aviso", "alerta": "Alerta", "excedido": "Excedido", "sin_presupuesto": "Sin presupuesto"}
 
 
 def money(amount: float | Decimal) -> str:

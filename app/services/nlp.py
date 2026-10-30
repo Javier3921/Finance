@@ -12,6 +12,9 @@ import re
 import unicodedata
 from dataclasses import dataclass
 
+from app.services.montos import PATRON_IMPORTE, parse_monto
+from app.services.tiempo import hoy
+
 # palabra clave -> (categoría, subcategoría | None)
 _KEYWORDS: dict[str, tuple[str, str | None]] = {
     "almuerzo": ("Comida", "Almuerzo"),
@@ -39,7 +42,7 @@ _KEYWORDS: dict[str, tuple[str, str | None]] = {
     "videojuego": ("Entretenimiento", "Videojuego"),
 }
 
-_AMOUNT_RE = re.compile(r"(\d+(?:[.,]\d{1,2})?)\s*(?:soles|sol|s/\.?)?", re.IGNORECASE)
+_AMOUNT_RE = re.compile(rf"({PATRON_IMPORTE})\s*(?:soles|sol|s/\.?)?", re.IGNORECASE)
 
 
 def _strip_accents(text: str) -> str:
@@ -67,14 +70,14 @@ def parse_expense_text(text: str, *, today: dt.date | None = None) -> ParsedExpe
     """Intenta extraer monto + categoría/subcategoría + fecha de una frase
     libre. Devuelve None si no se encuentra ningún monto (no hay nada que
     registrar)."""
-    today = today or dt.date.today()
+    today = today or hoy()
     normalized = _strip_accents(text.lower())
 
     amount_match = _AMOUNT_RE.search(normalized)
     if not amount_match:
         return None
-    amount = float(amount_match.group(1).replace(",", "."))
-    if amount <= 0:
+    amount = parse_monto(amount_match.group(1))
+    if amount is None:
         return None
 
     category, subcategory, matched_keyword = None, None, None

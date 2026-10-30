@@ -31,6 +31,9 @@ class Settings:
     supabase_receipts_bucket: str
     dashboard_password: str | None
     allowed_chat_ids: frozenset[int]
+    # Lectura del importe de la foto. Sin clave, el bot pide el monto a mano (ver app/services/ocr.py).
+    gemini_api_key: str | None = None
+    gemini_model: str = "gemini-3.6-flash"
 
 
 def parse_chat_ids(raw: str | None) -> frozenset[int]:
@@ -57,6 +60,8 @@ def get_settings() -> Settings:
         supabase_receipts_bucket=os.getenv("SUPABASE_RECEIPTS_BUCKET", "receipts"),
         dashboard_password=os.getenv("DASHBOARD_PASSWORD") or None,
         allowed_chat_ids=parse_chat_ids(os.getenv("ALLOWED_CHAT_IDS")),
+        gemini_api_key=os.getenv("GEMINI_API_KEY") or None,
+        gemini_model=os.getenv("GEMINI_MODEL", "gemini-3.6-flash"),
     )
 
 

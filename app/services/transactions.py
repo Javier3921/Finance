@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import datetime as dt
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -15,11 +15,20 @@ from app.models import (
     Transaction,
     TransactionItem,
     TRANSACTION_KINDS,
+    TRANSACTION_STATUSES,
 )
 
 
 class ValidationError(ValueError):
     """Entrada inválida al registrar un movimiento (monto, categoría, etc.)."""
+
+
+def _decimal(valor, quien: str) -> Decimal:
+    """Convierte un importe a Decimal; si no es un número, es un error de validación y no una excepción interna."""
+    try:
+        return Decimal(str(valor))
+    except (InvalidOperation, ValueError):
+        raise ValidationError(f"{quien} no es un número válido: {valor!r}") from None
 
 
 def find_category(session: Session, user_id: int, name: str) -> Category | None:
@@ -80,7 +89,7 @@ def create_transaction(
         raise ValidationError(f"Tipo de movimiento inválido: {kind!r}")
     if kind == "gasto" and gasto_type not in GASTO_TYPES:
         raise ValidationError("Un gasto debe indicar si es 'fijo' o 'variable'")
-    if amount is None or Decimal(str(amount)) <= 0:
+    if amount is None or _decimal(amount, "El monto") <= 0:
         raise ValidationError("El monto debe ser mayor a cero")
 
     category = find_category(session, user_id, category_name) if category_name else None
@@ -94,10 +103,20 @@ def create_transaction(
             raise ValidationError(f"No existe la subcategoría '{subcategory_name}' en '{category.name}'")
 
     payment_method = find_payment_method(session, user_id, payment_method_name) if payment_method_name else None
+    if payment_method_name and payment_method is None:
+        raise ValidationError(f"No existe o está inactivo el método de pago '{payment_method_name}'")
+
+    if status not in TRANSACTION_STATUSES:
+        raise ValidationError(f"Estado inválido: {status!r}")
 
     if items:
-        items_total = sum(Decimal(str(a)) for _, a in items)
-        if items_total != Decimal(str(amount)):
+        for nombre, importe in items:
+            if not str(nombre).strip():
+                raise ValidationError("Cada ítem del desglose necesita un nombre")
+            if _decimal(importe, f"El importe de '{nombre}'") <= 0:
+                raise ValidationError(f"El importe de '{nombre}' debe ser mayor a cero")
+        items_total = sum(_decimal(a, "Un importe del desglose") for _, a in items)
+        if items_total != _decimal(amount, "El monto"):
             raise ValidationError(
                 f"El desglose ({items_total}) no coincide con el monto total ({amount})"
             )
@@ -110,7 +129,7 @@ def create_transaction(
         subcategory_id=subcategory.id if subcategory else None,
         payment_method_id=payment_method.id if payment_method else None,
         description=description,
-        amount=Decimal(str(amount)),
+        amount=_decimal(amount, "El monto"),
         date=date,
         merchant=merchant,
         notes=notes,
@@ -122,7 +141,7 @@ def create_transaction(
     session.flush()
 
     for name, item_amount in items or []:
-        session.add(TransactionItem(transaction_id=transaction.id, name=name, amount=Decimal(str(item_amount))))
+        session.add(TransactionItem(transaction_id=transaction.id, name=name, amount=_decimal(item_amount, "Un importe del desglose")))
 
     return transaction
 
@@ -137,12 +156,17 @@ def list_transactions(
     category_id: int | None = None,
     subcategory_id: int | None = None,
     with_receipt: bool | None = None,
+    status: str | None = "confirmado",
 ) -> list[Transaction]:
+    """Movimientos del rango. Por defecto solo los confirmados: los pendientes y omitidos no cuentan en totales.
+    `status=None` los devuelve todos."""
     stmt = select(Transaction).where(
         Transaction.user_id == user_id,
         Transaction.date >= start,
         Transaction.date <= end,
     )
+    if status:
+        stmt = stmt.where(Transaction.status == status)
     if kind:
         stmt = stmt.where(Transaction.kind == kind)
     if category_id:

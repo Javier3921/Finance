@@ -420,7 +420,8 @@ flowchart LR
 **Por qué no un LLM:** para frases de 4–6 palabras, una regex y un
 diccionario resuelven el caso real con costo cero, latencia de
 microsegundos, resultados reproducibles y tests triviales. La IA se reserva
-para donde sí aporta: leer el comprobante (OCR), en la fase 2.
+para donde sí aporta: leer el comprobante. El OCR existe desde la fase 2 con la API de visión de Gemini
+(`services/ocr.py`), opcional: sin `GEMINI_API_KEY` no se envía nada.
 
 ### 7.2 Presupuestos *carry-forward* (`services/budgets.py`)
 
@@ -581,7 +582,7 @@ una app personal de un solo usuario.
 
 ## 11. Estrategia de testing
 
-- **42 tests** con `pytest` sobre la capa de servicios, que concentra la
+- **94 tests** con `pytest` sobre la capa de servicios, que concentra la
   lógica: presupuestos y prorrateo, alta y validación de movimientos, CRUD
   de configuración, ajustes y parser NLP.
 - Cada test recibe una **base SQLite en memoria nueva** (`tests/conftest.py`):
@@ -618,7 +619,7 @@ una app personal de un solo usuario.
 | Fase | Elemento |
 |---|---|
 | Corto plazo | Job de gastos recurrentes (`JobQueue` de python-telegram-bot); comandos `/ahorro` e `/inversion`; inferir fijo/variable por categoría; ping diario para evitar la pausa de Supabase |
-| Fase 2 | OCR del comprobante con un modelo de visión (monto, comercio, fecha); Alembic; login multiusuario (el esquema ya tiene `user_id`) |
+| Fase 2 | OCR del comprobante: monto ya hecho con visión; falta comercio y fecha; Alembic; login multiusuario (el esquema ya tiene `user_id`) |
 | Fase 3 | Comparativas mes a mes, detección de anomalías, proyección de fin de mes; notificaciones proactivas del bot |
 
 ## 13. Retos técnicos resueltos

@@ -6,6 +6,7 @@ import datetime as dt
 from telegram import Update
 from telegram.ext import ContextTypes
 
+from app.services.tiempo import hoy
 from app.bot.formatting import budget_line, money
 from app.db import get_session
 from app.services.budgets import category_budget_statuses
@@ -27,7 +28,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
 
 async def presupuesto_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    today = dt.date.today()
+    today = hoy()
     month_start = today.replace(day=1)
 
     with get_session() as session:
@@ -44,7 +45,7 @@ async def presupuesto_command(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 
 async def resumen_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    today = dt.date.today()
+    today = hoy()
     month_start = today.replace(day=1)
 
     with get_session() as session:

@@ -109,6 +109,13 @@ def _status_for(pct_used: Decimal, thresholds: tuple[Decimal, Decimal, Decimal])
     return "bien"
 
 
+def _estado(spent: Decimal, budget: Decimal, pct_used: Decimal, thresholds: tuple[Decimal, Decimal, Decimal]) -> str:
+    """Sin presupuesto no hay porcentaje que comparar: con gasto, se marca aparte y no como 'En rango'."""
+    if budget == 0 and spent > 0:
+        return "sin_presupuesto"
+    return _status_for(pct_used, thresholds)
+
+
 def amount_spent(
     session: Session, user_id: int, category_id: int, start: dt.date, end: dt.date, subcategory_id: int | None = None
 ) -> Decimal:
@@ -117,6 +124,7 @@ def amount_spent(
     stmt = select(func.coalesce(func.sum(Transaction.amount), 0)).where(
         Transaction.user_id == user_id,
         Transaction.kind == "gasto",
+        Transaction.status == "confirmado",
         Transaction.category_id == category_id,
         Transaction.date >= start,
         Transaction.date <= end,
@@ -158,7 +166,7 @@ def category_budget_statuses(session: Session, user_id: int, start: dt.date, end
                 spent=spent,
                 budget=budget,
                 pct_used=pct_used,
-                status=_status_for(pct_used, thresholds),
+                status=_estado(spent, budget, pct_used, thresholds),
             )
         )
     return results
@@ -189,7 +197,7 @@ def subcategory_budget_statuses(session: Session, user_id: int, category_id: int
                 spent=spent,
                 budget=budget,
                 pct_used=pct_used,
-                status=_status_for(pct_used, thresholds),
+                status=_estado(spent, budget, pct_used, thresholds),
                 subcategory_id=subcategory.id,
                 subcategory_name=subcategory.name,
             )

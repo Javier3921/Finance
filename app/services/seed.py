@@ -13,6 +13,7 @@ import datetime as dt
 
 from sqlalchemy import select
 
+from app.services.tiempo import hoy
 from app.config import settings as app_settings
 from app.db import get_session, init_db
 from app.models import BudgetPeriod, Category, PaymentMethod, Subcategory, User
@@ -37,7 +38,7 @@ DEFAULT_PAYMENT_METHODS = ["Efectivo", "Tarjeta de crédito", "Tarjeta de débit
 
 def seed() -> None:
     init_db()
-    today = dt.date.today()
+    today = hoy()
 
     with get_session() as session:
         # Sistema de un solo usuario: se reutiliza el existente (sea cual sea

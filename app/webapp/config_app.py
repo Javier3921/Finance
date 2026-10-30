@@ -18,6 +18,7 @@ recién DESPUÉS, ya afuera, llamar a `st.rerun()`.
 from __future__ import annotations
 
 import datetime as dt
+import hmac
 import os
 import sys
 from pathlib import Path
@@ -45,6 +46,8 @@ try:
 except Exception:
     pass
 
+from app.bot.formatting import STATUS_LABEL
+from app.services.tiempo import hoy
 from app.config import settings
 from app.db import get_session, init_db
 from app.services import budgets as budgets_service
@@ -74,7 +77,8 @@ def _require_password() -> None:
     st.title("🔒 Finanzas — Acceso")
     password = st.text_input("Contraseña", type="password")
     if st.button("Entrar"):
-        if password == settings.dashboard_password:
+        # Comparación en tiempo constante: no revela cuántos caracteres coinciden.
+        if hmac.compare_digest(password.encode(), (settings.dashboard_password or "").encode()):
             st.session_state["authenticated"] = True
             st.rerun()
         else:
@@ -123,7 +127,7 @@ tab_dashboard, tab_categorias, tab_comprobantes, tab_presupuestos, tab_metodos, 
 def date_range_picker(key_prefix: str, default_preset: str = "Este mes") -> tuple[dt.date, dt.date]:
     """Control de rango de fechas reutilizable: día/semana/mes/año o
     personalizado. Devuelve (inicio, fin)."""
-    today = dt.date.today()
+    today = hoy()
     preset = st.radio(
         "Rango de fechas", ["Hoy", "Esta semana", "Este mes", "Este año", "Personalizado"],
         horizontal=True, index=["Hoy", "Esta semana", "Este mes", "Este año", "Personalizado"].index(default_preset),
@@ -148,13 +152,18 @@ def date_range_picker(key_prefix: str, default_preset: str = "Este mes") -> tupl
 
 
 # ================================================================ DASHBOARD
-with tab_dashboard:
-    st.subheader("¿Cómo van mis gastos?")
-    dash_start, dash_end = date_range_picker("dash")
+COLUMNAS_GASTO = ["fecha", "categoria", "subcategoria", "tipo", "monto"]
 
+
+def _periodo_anterior(inicio: dt.date, fin: dt.date) -> tuple[dt.date, dt.date]:
+    """El mismo número de días justo antes del rango, para comparar."""
+    dias = (fin - inicio).days + 1
+    return inicio - dt.timedelta(days=dias), inicio - dt.timedelta(days=1)
+
+
+def _gastos(user_id: int, inicio: dt.date, fin: dt.date) -> pd.DataFrame:
     with get_session() as session:
-        user = get_default_user(session)
-        gastos = transactions_service.list_transactions(session, user.id, dash_start, dash_end, kind="gasto")
+        gastos = transactions_service.list_transactions(session, user_id, inicio, fin, kind="gasto")
         rows = [
             {
                 "fecha": tx.date,
@@ -165,99 +174,175 @@ with tab_dashboard:
             }
             for tx in gastos
         ]
+    return pd.DataFrame(rows, columns=COLUMNAS_GASTO)
 
-    if not rows:
+
+def _variacion(actual: float, anterior: float) -> str | None:
+    if anterior == 0:
+        return None
+    return f"{(actual - anterior) / anterior * 100:+.0f}% vs. periodo anterior"
+
+
+with tab_dashboard:
+    st.subheader("¿Cómo van mis gastos?")
+    dash_start, dash_end = date_range_picker("dash")
+    ant_start, ant_end = _periodo_anterior(dash_start, dash_end)
+    with get_session() as session:
+        dash_user_id = get_default_user(session).id
+    df_todo = _gastos(dash_user_id, dash_start, dash_end)
+    df_ant_todo = _gastos(dash_user_id, ant_start, ant_end)
+
+    if df_todo.empty:
         st.info("No hay gastos registrados en este rango todavía.")
     else:
-        df = pd.DataFrame(rows)
-        total = df["monto"].sum()
-        fijo = df.loc[df["tipo"] == "Fijo", "monto"].sum()
-        variable = df.loc[df["tipo"] == "Variable", "monto"].sum()
-        n_dias = (dash_end - dash_start).days + 1
-        promedio_diario = total / n_dias if n_dias > 0 else 0
+        f1, f2 = st.columns([2, 1])
+        categorias = sorted(df_todo["categoria"].unique())
+        cats_sel = f1.multiselect("Categorías", categorias, default=categorias, key="dash_cats")
+        tipos_sel = f2.multiselect("Tipo de gasto", ["Fijo", "Variable"], default=["Fijo", "Variable"], key="dash_tipos")
 
-        k1, k2, k3, k4 = st.columns(4)
-        k1.metric("Total gastado", f"S/ {total:,.0f}")
-        k2.metric("Gasto fijo", f"S/ {fijo:,.0f}")
-        k3.metric("Gasto variable", f"S/ {variable:,.0f}")
-        k4.metric("Promedio diario", f"S/ {promedio_diario:,.0f}")
+        def _filtrar(d: pd.DataFrame) -> pd.DataFrame:
+            return d[d["categoria"].isin(cats_sel) & d["tipo"].isin(tipos_sel)]
 
-        st.divider()
-        col_left, col_right = st.columns([1.3, 1])
+        df = _filtrar(df_todo)
+        df_ant = _filtrar(df_ant_todo)
 
-        with col_left:
-            st.write("**Gasto por categoría**")
-            chart_type = st.radio(
-                "Tipo de gráfico", ["Barras", "Pastel"], horizontal=True, key="dash_cat_chart_type", label_visibility="collapsed",
-            )
-            by_cat = df.groupby("categoria", as_index=False)["monto"].sum().sort_values("monto", ascending=False)
-            if chart_type == "Barras":
-                cat_chart = (
-                    alt.Chart(by_cat)
-                    .mark_bar()
-                    .encode(
-                        x=alt.X("monto:Q", title="Gastado (S/)"),
-                        y=alt.Y("categoria:N", sort="-x", title=""),
-                        tooltip=[alt.Tooltip("categoria:N", title="Categoría"), alt.Tooltip("monto:Q", title="Monto", format=",.0f")],
-                    )
-                )
-            else:
-                cat_chart = (
-                    alt.Chart(by_cat)
-                    .mark_arc(innerRadius=60)
-                    .encode(
-                        theta=alt.Theta("monto:Q"),
-                        color=alt.Color("categoria:N", title="Categoría"),
-                        tooltip=[alt.Tooltip("categoria:N", title="Categoría"), alt.Tooltip("monto:Q", title="Monto", format=",.0f")],
-                    )
-                )
-            st.altair_chart(cat_chart, width="stretch")
-
-        with col_right:
-            st.write("**Fijo vs. variable**")
-            by_type = df.groupby("tipo", as_index=False)["monto"].sum()
-            type_chart = (
-                alt.Chart(by_type)
-                .mark_arc(innerRadius=60)
-                .encode(
-                    theta=alt.Theta("monto:Q"),
-                    color=alt.Color("tipo:N", title="Tipo", scale=alt.Scale(domain=["Fijo", "Variable"])),
-                    tooltip=[alt.Tooltip("tipo:N", title="Tipo"), alt.Tooltip("monto:Q", title="Monto", format=",.0f")],
-                )
-            )
-            st.altair_chart(type_chart, width="stretch")
-
-        st.divider()
-        st.write("**Evolución en el tiempo**")
-        span_days = (dash_end - dash_start).days
-        df["fecha_dt"] = pd.to_datetime(df["fecha"])
-        if span_days <= 31:
-            df["bucket"] = df["fecha_dt"].dt.normalize()
-            bucket_title = "Día"
-        elif span_days <= 731:
-            df["bucket"] = df["fecha_dt"].dt.to_period("M").dt.to_timestamp()
-            bucket_title = "Mes"
+        if df.empty:
+            st.warning("Ningún gasto cumple los filtros. Amplía las categorías o el tipo de gasto.")
         else:
-            df["bucket"] = df["fecha_dt"].dt.to_period("Y").dt.to_timestamp()
-            bucket_title = "Año"
+            total, total_ant = df["monto"].sum(), df_ant["monto"].sum()
+            fijo = df.loc[df["tipo"] == "Fijo", "monto"].sum()
+            variable = df.loc[df["tipo"] == "Variable", "monto"].sum()
+            n_dias = (dash_end - dash_start).days + 1
+            promedio, promedio_ant = total / n_dias, total_ant / ((ant_end - ant_start).days + 1)
 
-        evolucion = df.groupby("bucket", as_index=False)["monto"].sum().sort_values("bucket")
-        line_chart = (
-            alt.Chart(evolucion)
-            .mark_line(point=True)
-            .encode(
-                x=alt.X("bucket:T", title=bucket_title),
-                y=alt.Y("monto:Q", title="Gastado (S/)"),
-                tooltip=[alt.Tooltip("bucket:T", title=bucket_title), alt.Tooltip("monto:Q", title="Monto", format=",.0f")],
-            )
-        )
-        st.altair_chart(line_chart, width="stretch")
+            k1, k2, k3, k4 = st.columns(4)
+            k1.metric("Total gastado", f"S/ {total:,.0f}", delta=_variacion(total, total_ant), delta_color="inverse")
+            k2.metric("Gasto fijo", f"S/ {fijo:,.0f}")
+            k3.metric("Gasto variable", f"S/ {variable:,.0f}")
+            k4.metric("Promedio diario", f"S/ {promedio:,.0f}", delta=_variacion(promedio, promedio_ant), delta_color="inverse")
 
-        with st.expander("Ver tabla de movimientos de este rango"):
-            st.dataframe(
-                df[["fecha", "categoria", "subcategoria", "tipo", "monto"]].sort_values("fecha", ascending=False),
-                width="stretch", hide_index=True,
-            )
+            vista_resumen, vista_movimientos, vista_presupuesto = st.tabs(["Resumen", "Movimientos", "Presupuesto del rango"])
+
+            with vista_resumen:
+                col_left, col_right = st.columns([1.3, 1])
+                with col_left:
+                    st.write("**Gasto por categoría**")
+                    chart_type = st.segmented_control(
+                        "Tipo de gráfico", ["Barras", "Pastel"], default="Barras", key="dash_cat_chart_type",
+                        label_visibility="collapsed",
+                    )
+                    by_cat = df.groupby("categoria", as_index=False)["monto"].sum().sort_values("monto", ascending=False)
+                    if chart_type == "Pastel":
+                        cat_chart = (
+                            alt.Chart(by_cat)
+                            .mark_arc(innerRadius=60)
+                            .encode(
+                                theta=alt.Theta("monto:Q"),
+                                color=alt.Color("categoria:N", title="Categoría"),
+                                tooltip=[alt.Tooltip("categoria:N", title="Categoría"), alt.Tooltip("monto:Q", title="Monto", format=",.0f")],
+                            )
+                        )
+                    else:
+                        cat_chart = (
+                            alt.Chart(by_cat)
+                            .mark_bar()
+                            .encode(
+                                x=alt.X("monto:Q", title="Gastado (S/)"),
+                                y=alt.Y("categoria:N", sort="-x", title=""),
+                                tooltip=[alt.Tooltip("categoria:N", title="Categoría"), alt.Tooltip("monto:Q", title="Monto", format=",.0f")],
+                            )
+                        )
+                    st.altair_chart(cat_chart, width="stretch")
+
+                with col_right:
+                    st.write("**Fijo vs. variable**")
+                    by_type = df.groupby("tipo", as_index=False)["monto"].sum()
+                    type_chart = (
+                        alt.Chart(by_type)
+                        .mark_arc(innerRadius=60)
+                        .encode(
+                            theta=alt.Theta("monto:Q"),
+                            color=alt.Color("tipo:N", title="Tipo", scale=alt.Scale(domain=["Fijo", "Variable"])),
+                            tooltip=[alt.Tooltip("tipo:N", title="Tipo"), alt.Tooltip("monto:Q", title="Monto", format=",.0f")],
+                        )
+                    )
+                    st.altair_chart(type_chart, width="stretch")
+
+                st.write("**Evolución en el tiempo**")
+                span_days = (dash_end - dash_start).days
+                fechas = pd.to_datetime(df["fecha"])
+                if span_days <= 31:
+                    bucket, bucket_title = fechas.dt.normalize(), "Día"
+                elif span_days <= 731:
+                    bucket, bucket_title = fechas.dt.to_period("M").dt.to_timestamp(), "Mes"
+                else:
+                    bucket, bucket_title = fechas.dt.to_period("Y").dt.to_timestamp(), "Año"
+                evolucion = df.assign(bucket=bucket).groupby("bucket", as_index=False)["monto"].sum().sort_values("bucket")
+                line_chart = (
+                    alt.Chart(evolucion)
+                    .mark_line(point=True)
+                    .encode(
+                        x=alt.X("bucket:T", title=bucket_title),
+                        y=alt.Y("monto:Q", title="Gastado (S/)"),
+                        tooltip=[alt.Tooltip("bucket:T", title=bucket_title), alt.Tooltip("monto:Q", title="Monto", format=",.0f")],
+                    )
+                )
+                st.altair_chart(line_chart, width="stretch")
+
+                st.write("**Los 5 gastos más grandes del rango**")
+                top = df.nlargest(5, "monto")[COLUMNAS_GASTO]
+                st.dataframe(
+                    top,
+                    column_config={
+                        "fecha": st.column_config.DateColumn("Fecha", format="DD/MM/YYYY"),
+                        "monto": st.column_config.NumberColumn("Monto", format="S/ %.2f"),
+                    },
+                    width="stretch", hide_index=True,
+                )
+
+            with vista_movimientos:
+                buscar = st.text_input("Buscar por categoría o subcategoría", key="dash_buscar", placeholder="Ej. almuerzo")
+                tabla = df[COLUMNAS_GASTO].sort_values("fecha", ascending=False)
+                if buscar.strip():
+                    texto = buscar.strip().lower()
+                    tabla = tabla[
+                        tabla["categoria"].str.lower().str.contains(texto, regex=False)
+                        | tabla["subcategoria"].str.lower().str.contains(texto, regex=False)
+                    ]
+                st.caption(f"{len(tabla)} movimiento(s) · total S/ {tabla['monto'].sum():,.2f}")
+                st.dataframe(
+                    tabla,
+                    column_config={
+                        "fecha": st.column_config.DateColumn("Fecha", format="DD/MM/YYYY"),
+                        "monto": st.column_config.NumberColumn("Monto", format="S/ %.2f"),
+                    },
+                    width="stretch", hide_index=True,
+                )
+                st.download_button(
+                    "Descargar CSV", data=tabla.to_csv(index=False).encode("utf-8-sig"),
+                    file_name=f"gastos_{dash_start:%Y%m%d}_{dash_end:%Y%m%d}.csv", mime="text/csv",
+                )
+
+            with vista_presupuesto:
+                st.caption(
+                    "Compara con el presupuesto mensual completo de cada mes del rango. En rangos cortos (hoy, esta semana) "
+                    "el porcentaje sale bajo: el gasto es de unos días y el presupuesto, de un mes entero."
+                )
+                with get_session() as session:
+                    estados = budgets_service.category_budget_statuses(session, dash_user_id, dash_start, dash_end)
+                con_presupuesto = [e for e in estados if e.budget > 0]
+                sin_presupuesto = [e for e in estados if e.budget == 0 and e.spent > 0]
+                if not con_presupuesto and not sin_presupuesto:
+                    st.info("Ninguna categoría tiene presupuesto ni gastos en este rango.")
+                for e in con_presupuesto:
+                    avance = min(float(e.pct_used) / 100, 1.0)
+                    st.progress(
+                        avance,
+                        text=f"{e.category_name}: S/ {float(e.spent):,.0f} de S/ {float(e.budget):,.0f} "
+                             f"({int(e.pct_used)}%) · {STATUS_LABEL[e.status]}",
+                    )
+                for e in sin_presupuesto:
+                    st.caption(f"{e.category_name}: S/ {float(e.spent):,.0f} gastados, sin presupuesto asignado")
 
 # ============================================================== CATEGORÍAS
 with tab_categorias:
@@ -401,7 +486,7 @@ with tab_comprobantes:
     )
 
     receipt_start = col_f3.date_input("Desde", value=dt.date(2020, 1, 1), key="receipt_start")
-    receipt_end = col_f4.date_input("Hasta", value=dt.date.today(), key="receipt_end")
+    receipt_end = col_f4.date_input("Hasta", value=hoy(), key="receipt_end")
 
     with get_session() as session:
         user = get_default_user(session)
@@ -477,7 +562,7 @@ with tab_presupuestos:
         )
 
         col_c, col_d = st.columns(2)
-        today = dt.date.today()
+        today = hoy()
         budget_year = col_c.number_input("Año", min_value=2020, max_value=2100, value=today.year, step=1)
         budget_month = col_d.selectbox("Mes (aplica desde acá)", options=list(range(1, 13)), format_func=lambda m: MESES[m - 1].capitalize(), index=today.month - 1)
 

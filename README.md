@@ -86,7 +86,7 @@ presupuesto editado en el dashboard lo usa el bot en el siguiente mensaje.
 | Hosting del bot | Oracle Cloud Always Free (ARM Ampere A1) + `systemd` | 24/7, reinicio automático, S/0 |
 | Dashboard | Streamlit + Altair + pandas en Streamlit Community Cloud | Redeploy automático en cada `git push` |
 | Lenguaje natural | Regex + diccionario de palabras clave | Gratis, instantáneo y 100 % predecible |
-| Tests | pytest sobre SQLite en memoria | 42 tests, sin token, sin internet, sin Supabase |
+| Tests | pytest sobre SQLite en memoria | 94 tests, sin token, sin internet, sin Supabase |
 
 ## Documentación
 
@@ -119,7 +119,7 @@ app/
 │   └── handlers/          # /gasto, texto libre, fotos, /presupuesto, /resumen
 └── webapp/
     └── config_app.py      # dashboard + panel de configuración (Streamlit)
-tests/                     # 42 tests (pytest)
+tests/                     # 94 tests (pytest)
 deploy/finanzas-bot.service  # unidad systemd de referencia para el bot
 docs/                      # análisis técnico y guía de despliegue
 preview/dashboard.html     # mockup visual
@@ -138,7 +138,7 @@ pip install -r requirements.txt
 cp .env.example .env              # completar TELEGRAM_BOT_TOKEN y DASHBOARD_PASSWORD
 
 python -m app.services.seed       # crea finanzas.db con datos iniciales
-python -m pytest                  # 42 tests
+python -m pytest                  # 94 tests
 
 python -m app.bot.main                    # bot
 streamlit run app/webapp/config_app.py    # dashboard en http://localhost:8501
@@ -177,7 +177,8 @@ Lo que conviene adaptar:
 Streamlit Community Cloud, datos en Supabase), costo mensual **S/0**.
 
 Próximos pasos: gastos recurrentes automáticos, comandos `/ahorro` e
-`/inversion`, OCR del comprobante y migraciones versionadas con Alembic —
+`/inversion`, migraciones versionadas con Alembic y el OCR de comprobantes
+(ya existe con Gemini, opcional: ver `GEMINI_API_KEY` en `.env.example`) —
 detalle en el [roadmap](docs/ANALISIS_TECNICO.md#12-limitaciones-y-roadmap).
 
 ## Licencia

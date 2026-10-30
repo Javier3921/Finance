@@ -3,36 +3,104 @@
 Las categorías y subcategorías se leen de la base de datos en cada paso
 (no están fijas en el código), así que si el usuario agrega/renombra una
 categoría desde el panel de configuración, el bot la ofrece de inmediato.
+
+Cada paso tiene "⬅️ Atrás". La pila de pasos vive en `user_data["pasos"]`: al volver,
+se quita el paso actual y se vuelve a dibujar el anterior tal como era.
 """
 from __future__ import annotations
-
-import datetime as dt
 
 from sqlalchemy import select
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import CallbackQueryHandler, CommandHandler, ContextTypes, ConversationHandler, MessageHandler, filters
 
+from app.services.tiempo import hoy
 from app.bot.formatting import money
 from app.db import get_session
 from app.models import Category, Subcategory
 from app.services.budgets import category_budget_statuses
+from app.services.montos import parse_monto
 from app.services.transactions import ValidationError, create_transaction
 from app.services.users import get_or_create_user_for_chat
 
 CHOOSING_TYPE, CHOOSING_CATEGORY, CHOOSING_SUBCATEGORY, ENTERING_AMOUNT, CONFIRMING = range(5)
 
+ESTADO_DE_PASO = {
+    "tipo": CHOOSING_TYPE,
+    "categoria": CHOOSING_CATEGORY,
+    "subcategoria": CHOOSING_SUBCATEGORY,
+    "monto": ENTERING_AMOUNT,
+    "confirmar": CONFIRMING,
+}
+BOTON_ATRAS = InlineKeyboardButton("⬅️ Atrás", callback_data="gasto_back")
+
+
+def _destino(d: dict) -> str:
+    cat = d["category_name"]
+    subcat = d.get("subcategory_name")
+    return f"{cat} → {subcat}" if subcat else cat
+
+
+async def _mostrar(update: Update, texto: str, teclado: InlineKeyboardMarkup | None = None) -> None:
+    """Edita el mensaje si viene de un botón; responde si viene de un texto (el monto)."""
+    if update.callback_query:
+        await update.callback_query.edit_message_text(texto, reply_markup=teclado)
+    else:
+        await update.message.reply_text(texto, reply_markup=teclado)
+
+
+async def _pantalla(nombre: str, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Dibuja un paso y devuelve su estado. No toca la pila."""
+    d = context.user_data
+    if nombre == "tipo":
+        teclado = InlineKeyboardMarkup([
+            [InlineKeyboardButton("Gasto fijo", callback_data="gasto_type:fijo")],
+            [InlineKeyboardButton("Gasto variable", callback_data="gasto_type:variable")],
+        ])
+        await _mostrar(update, "Claro. ¿Qué tipo de gasto quieres registrar?", teclado)
+    elif nombre == "categoria":
+        with get_session() as session:
+            categorias = session.scalars(
+                select(Category).where(Category.user_id == d["user_id"], Category.is_active.is_(True)).order_by(Category.sort_order)
+            ).all()
+            botones = [[InlineKeyboardButton(c.name, callback_data=f"gasto_cat:{c.id}")] for c in categorias]
+        botones.append([BOTON_ATRAS])
+        await _mostrar(update, "¿Qué categoría corresponde?", InlineKeyboardMarkup(botones))
+    elif nombre == "subcategoria":
+        with get_session() as session:
+            subcategorias = session.scalars(
+                select(Subcategory).where(Subcategory.category_id == d["category_id"], Subcategory.is_active.is_(True)).order_by(Subcategory.sort_order)
+            ).all()
+            botones = [[InlineKeyboardButton(s.name, callback_data=f"gasto_subcat:{s.id}")] for s in subcategorias]
+        botones.append([InlineKeyboardButton("(Sin subcategoría)", callback_data="gasto_subcat:none")])
+        botones.append([BOTON_ATRAS])
+        await _mostrar(update, "¿Qué tipo de gasto, más específicamente?", InlineKeyboardMarkup(botones))
+    elif nombre == "monto":
+        await _mostrar(
+            update,
+            f"Categoría: {_destino(d)}.\n¿Cuánto gastaste? (solo el número, en soles)",
+            InlineKeyboardMarkup([[BOTON_ATRAS]]),
+        )
+    else:  # confirmar
+        teclado = InlineKeyboardMarkup([
+            [
+                InlineKeyboardButton("Confirmar", callback_data="gasto_confirm"),
+                InlineKeyboardButton("Cancelar", callback_data="gasto_cancel"),
+            ],
+            [BOTON_ATRAS],
+        ])
+        await _mostrar(update, f"Voy a registrar {money(d['amount'])} en {_destino(d)} para hoy. ¿Confirmar?", teclado)
+    return ESTADO_DE_PASO[nombre]
+
+
+async def _avanzar(nombre: str, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    context.user_data.setdefault("pasos", []).append(nombre)
+    return await _pantalla(nombre, update, context)
+
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     context.user_data.clear()
-    keyboard = [
-        [InlineKeyboardButton("Gasto fijo", callback_data="gasto_type:fijo")],
-        [InlineKeyboardButton("Gasto variable", callback_data="gasto_type:variable")],
-    ]
-    await update.message.reply_text(
-        "Claro. ¿Qué tipo de gasto quieres registrar?",
-        reply_markup=InlineKeyboardMarkup(keyboard),
-    )
-    return CHOOSING_TYPE
+    context.user_data["pasos"] = []
+    return await _avanzar("tipo", update, context)
 
 
 async def on_type_chosen(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -43,37 +111,28 @@ async def on_type_chosen(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     with get_session() as session:
         user = get_or_create_user_for_chat(session, update.effective_chat.id, update.effective_user.first_name or "Usuario")
         context.user_data["user_id"] = user.id
-        categories = session.scalars(
-            select(Category).where(Category.user_id == user.id, Category.is_active.is_(True)).order_by(Category.sort_order)
-        ).all()
-        buttons = [[InlineKeyboardButton(c.name, callback_data=f"gasto_cat:{c.id}")] for c in categories]
-
-    await query.edit_message_text("¿Qué categoría corresponde?", reply_markup=InlineKeyboardMarkup(buttons))
-    return CHOOSING_CATEGORY
+    return await _avanzar("categoria", update, context)
 
 
 async def on_category_chosen(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     query = update.callback_query
     await query.answer()
     category_id = int(query.data.split(":", 1)[1])
-    context.user_data["category_id"] = category_id
 
     with get_session() as session:
         category = session.get(Category, category_id)
-        context.user_data["category_name"] = category.name
-        subcategories = session.scalars(
-            select(Subcategory).where(Subcategory.category_id == category_id, Subcategory.is_active.is_(True)).order_by(Subcategory.sort_order)
-        ).all()
+        if category is None or category.user_id != context.user_data["user_id"] or not category.is_active:
+            await query.edit_message_text("Esa categoría ya no existe. Usa /gasto para empezar de nuevo.")
+            return CHOOSING_CATEGORY
+        category_name = category.name
+        tiene_subcategorias = session.scalars(
+            select(Subcategory.id).where(Subcategory.category_id == category_id, Subcategory.is_active.is_(True))
+        ).first() is not None
 
-    if not subcategories:
-        context.user_data["subcategory_name"] = None
-        await query.edit_message_text(f"Categoría: {context.user_data['category_name']}.\n¿Cuánto gastaste? (solo el número, en soles)")
-        return ENTERING_AMOUNT
-
-    buttons = [[InlineKeyboardButton(s.name, callback_data=f"gasto_subcat:{s.id}")] for s in subcategories]
-    buttons.append([InlineKeyboardButton("(Sin subcategoría)", callback_data="gasto_subcat:none")])
-    await query.edit_message_text("¿Qué tipo de gasto, más específicamente?", reply_markup=InlineKeyboardMarkup(buttons))
-    return CHOOSING_SUBCATEGORY
+    context.user_data.update(category_id=category_id, category_name=category_name, subcategory_name=None)
+    if not tiene_subcategorias:
+        return await _avanzar("monto", update, context)
+    return await _avanzar("subcategoria", update, context)
 
 
 async def on_subcategory_chosen(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -85,37 +144,34 @@ async def on_subcategory_chosen(update: Update, context: ContextTypes.DEFAULT_TY
         context.user_data["subcategory_name"] = None
     else:
         with get_session() as session:
-            subcategory = session.get(Subcategory, int(raw))
+            subcategory = session.get(Subcategory, int(raw)) if raw.isdigit() else None
+            if subcategory is None or subcategory.category_id != context.user_data["category_id"] or not subcategory.is_active:
+                await query.edit_message_text("Esa subcategoría ya no existe. Usa /gasto para empezar de nuevo.")
+                return CHOOSING_SUBCATEGORY
             context.user_data["subcategory_name"] = subcategory.name
 
-    await query.edit_message_text("¿Cuánto gastaste? (solo el número, en soles)")
-    return ENTERING_AMOUNT
+    return await _avanzar("monto", update, context)
 
 
 async def on_amount_entered(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    text = update.message.text.strip().replace(",", ".").replace("S/", "").strip()
-    try:
-        amount = float(text)
-        if amount <= 0:
-            raise ValueError
-    except ValueError:
-        await update.message.reply_text("No pude leer ese monto. Escribe solo el número, por ejemplo: 35")
+    amount = parse_monto(update.message.text)
+    if amount is None:
+        await update.message.reply_text("No pude leer ese monto. Escribe solo el número, por ejemplo: 35 o 1,500")
         return ENTERING_AMOUNT
 
     context.user_data["amount"] = amount
-    cat = context.user_data["category_name"]
-    subcat = context.user_data.get("subcategory_name")
-    destino = f"{cat} → {subcat}" if subcat else cat
+    return await _avanzar("confirmar", update, context)
 
-    keyboard = [[
-        InlineKeyboardButton("Confirmar", callback_data="gasto_confirm"),
-        InlineKeyboardButton("Cancelar", callback_data="gasto_cancel"),
-    ]]
-    await update.message.reply_text(
-        f"Voy a registrar {money(amount)} en {destino} para hoy. ¿Confirmar?",
-        reply_markup=InlineKeyboardMarkup(keyboard),
-    )
-    return CONFIRMING
+
+async def on_back(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Vuelve al paso anterior: quita el actual de la pila y dibuja el que queda encima."""
+    query = update.callback_query
+    await query.answer()
+    pasos = context.user_data.setdefault("pasos", [])
+    if len(pasos) < 2:
+        return ESTADO_DE_PASO[pasos[-1]] if pasos else CHOOSING_TYPE
+    pasos.pop()
+    return await _pantalla(pasos[-1], update, context)
 
 
 async def on_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -132,7 +188,7 @@ async def on_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
                 gasto_type=data["gasto_type"],
                 description=data.get("subcategory_name") or data["category_name"],
                 amount=data["amount"],
-                date=dt.date.today(),
+                date=hoy(),
                 category_name=data["category_name"],
                 subcategory_name=data.get("subcategory_name"),
                 source="bot_texto",
@@ -143,7 +199,7 @@ async def on_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
             return ConversationHandler.END
 
         statuses = {s.category_id: s for s in category_budget_statuses(
-            session, data["user_id"], dt.date.today().replace(day=1), dt.date.today()
+            session, data["user_id"], hoy().replace(day=1), hoy()
         )}
         status = statuses.get(data["category_id"])
 
@@ -172,12 +228,22 @@ def build_handler() -> ConversationHandler:
         entry_points=[CommandHandler("gasto", start)],
         states={
             CHOOSING_TYPE: [CallbackQueryHandler(on_type_chosen, pattern=r"^gasto_type:")],
-            CHOOSING_CATEGORY: [CallbackQueryHandler(on_category_chosen, pattern=r"^gasto_cat:")],
-            CHOOSING_SUBCATEGORY: [CallbackQueryHandler(on_subcategory_chosen, pattern=r"^gasto_subcat:")],
-            ENTERING_AMOUNT: [MessageHandler(filters.TEXT & ~filters.COMMAND, on_amount_entered)],
+            CHOOSING_CATEGORY: [
+                CallbackQueryHandler(on_category_chosen, pattern=r"^gasto_cat:"),
+                CallbackQueryHandler(on_back, pattern=r"^gasto_back$"),
+            ],
+            CHOOSING_SUBCATEGORY: [
+                CallbackQueryHandler(on_subcategory_chosen, pattern=r"^gasto_subcat:"),
+                CallbackQueryHandler(on_back, pattern=r"^gasto_back$"),
+            ],
+            ENTERING_AMOUNT: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, on_amount_entered),
+                CallbackQueryHandler(on_back, pattern=r"^gasto_back$"),
+            ],
             CONFIRMING: [
                 CallbackQueryHandler(on_confirm, pattern=r"^gasto_confirm$"),
                 CallbackQueryHandler(on_cancel, pattern=r"^gasto_cancel$"),
+                CallbackQueryHandler(on_back, pattern=r"^gasto_back$"),
             ],
         },
         fallbacks=[CommandHandler("cancelar", on_cancel)],
