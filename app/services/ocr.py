@@ -27,12 +27,20 @@ PROMPT = (
     "Es la foto de un comprobante de pago en soles (Perú). Responde solo con el importe total pagado, como número, "
     "sin texto ni símbolos, por ejemplo 35.50. Si no hay un importe total legible, responde NONE."
 )
-TIEMPO_MAXIMO_S = 20
+# 20 s se quedaba corto en producción (ReadTimeout el 2026-11-07): con una imagen, el modelo tarda más en responder.
+TIEMPO_MAXIMO_S = 60
+# Leer un total no necesita razonar: menos pensamiento interno = respuesta mucho más rápida.
+NIVEL_RAZONAMIENTO = "low"
 
 
 def _cliente_o(cliente: httpx.Client | None):
     """Un cliente propio (y cerrado al salir) si no se pasa ninguno; el de la prueba se deja abierto."""
     return contextlib.nullcontext(cliente) if cliente is not None else httpx.Client(timeout=TIEMPO_MAXIMO_S)
+
+
+def esta_activo() -> bool:
+    """Si hay clave configurada: sirve para avisar en el chat cuando la lectura falla (sin clave no se intenta)."""
+    return bool(settings.gemini_api_key)
 
 
 def extraer_monto(imagen: bytes, *, cliente: httpx.Client | None = None) -> float | None:
@@ -47,7 +55,11 @@ def extraer_monto(imagen: bytes, *, cliente: httpx.Client | None = None) -> floa
                 {"text": PROMPT},
             ],
         }],
-        "generationConfig": {"temperature": 0, "maxOutputTokens": 1024},
+        "generationConfig": {
+            "temperature": 0,
+            "maxOutputTokens": 1024,
+            "thinkingConfig": {"thinkingLevel": NIVEL_RAZONAMIENTO},
+        },
     }
     cabeceras = {"x-goog-api-key": settings.gemini_api_key, "content-type": "application/json"}
     try:
@@ -57,8 +69,10 @@ def extraer_monto(imagen: bytes, *, cliente: httpx.Client | None = None) -> floa
         candidatos = respuesta.json().get("candidates") or []
         partes = candidatos[0].get("content", {}).get("parts", []) if candidatos else []
         texto = "".join(p.get("text", "") for p in partes).strip()
-    except Exception:  # noqa: BLE001 - cualquier fallo aquí significa "no se pudo leer", nada más
-        logger.warning("No se pudo leer el importe de la foto con Gemini", exc_info=True)
+    except Exception as error:  # noqa: BLE001 - cualquier fallo aquí significa "no se pudo leer", nada más
+        # El tipo y el código HTTP en la primera línea: con la traza larga, journalctl corta justo lo que importa.
+        detalle = f"HTTP {error.response.status_code}" if isinstance(error, httpx.HTTPStatusError) else type(error).__name__
+        logger.warning("No se pudo leer el importe de la foto con Gemini (%s)", detalle, exc_info=True)
         return None
     if not texto or texto.upper().startswith("NONE"):
         return None

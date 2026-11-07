@@ -64,6 +64,31 @@ def test_respuesta_sin_candidatos_devuelve_none(monkeypatch):
     assert ocr.extraer_monto(b"jpg", cliente=cliente) is None
 
 
+def test_pide_poco_razonamiento_para_responder_rapido(monkeypatch):
+    _config(monkeypatch, "clave-de-prueba")
+    capturadas = []
+    ocr.extraer_monto(b"jpg", cliente=_cliente("35", capturadas=capturadas))
+    config = json.loads(capturadas[0].content)["generationConfig"]
+    assert config["thinkingConfig"]["thinkingLevel"] == "low"
+    assert ocr.TIEMPO_MAXIMO_S >= 60  # 20 s daba ReadTimeout en producción
+
+
+def test_tiempo_agotado_no_bloquea_el_registro(monkeypatch):
+    _config(monkeypatch, "clave-de-prueba")
+
+    def lento(request):
+        raise httpx.ReadTimeout("simulado", request=request)
+
+    assert ocr.extraer_monto(b"jpg", cliente=httpx.Client(transport=httpx.MockTransport(lento))) is None
+
+
+def test_esta_activo_segun_la_clave(monkeypatch):
+    _config(monkeypatch, None)
+    assert ocr.esta_activo() is False
+    _config(monkeypatch, "clave-de-prueba")
+    assert ocr.esta_activo() is True
+
+
 def test_saturacion_o_cuota_no_bloquean_el_registro(monkeypatch):
     _config(monkeypatch, "clave-de-prueba")
     assert ocr.extraer_monto(b"jpg", cliente=_cliente(estado=503)) is None  # alta demanda

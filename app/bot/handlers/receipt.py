@@ -107,7 +107,12 @@ async def _pantalla(nombre: str, update: Update, context: ContextTypes.DEFAULT_T
         with get_session() as session:
             categorias = config_service.list_categories(session, d["user_id"])
             botones = [[InlineKeyboardButton(c.name, callback_data=f"receipt_cat:{c.id}")] for c in categorias]
-        aviso = f"\n\nLeí {money(d['monto_foto'])} en el comprobante." if d.get("monto_foto") else ""
+        if d.get("monto_foto"):
+            aviso = f"\n\nLeí {money(d['monto_foto'])} en el comprobante."
+        elif ocr.esta_activo():
+            aviso = "\n\nNo pude leer el importe de la foto; te lo pediré a mano."
+        else:
+            aviso = ""
         await _mostrar(
             update,
             "📷 Recibí la foto y la guardé como comprobante." + aviso + "\n\nSelecciona la categoría a la que se asigna el gasto:",
