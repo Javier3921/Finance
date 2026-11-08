@@ -19,11 +19,11 @@ Detalle de cada punto y criterios de aceptación en [`SPEC.md`](SPEC.md). Marcar
 - [x] Comando con confirmación por botones
 
 ## Fase 4 — Recurrentes
-- [ ] Servicio: vencimiento (quincena, fin de mes, día específico) y generación sin duplicados
-- [ ] Tabla `recurring_incomes` (ingresos fijos)
-- [ ] Pestaña *Recurrentes* en el panel
-- [ ] Job diario 08:00 + al arrancar, con botones Confirmar / Cambiar monto / Omitir
-- [ ] `/pendientes`
+- [x] Servicio: vencimiento (quincena, fin de mes, día específico) y generación sin duplicados
+- [x] Tabla `recurring_incomes` (ingresos fijos) + RLS automático en Postgres desde `init_db()`
+- [x] Pestaña *Recurrentes* en el panel (probada con `AppTest`: ver, editar, validar)
+- [x] Job diario 08:00 + al arrancar, con botones Confirmar / Cambiar monto / Omitir
+- [x] `/pendientes`
 
 ## Fase 5 — Resumen semanal
 - [ ] Servicio del resumen de la semana anterior

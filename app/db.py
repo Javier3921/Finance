@@ -48,6 +48,18 @@ def init_db() -> None:
 
     Base.metadata.create_all(bind=engine)
     _add_missing_columns()
+    _enable_rls()
+
+
+def _enable_rls() -> None:
+    """En Postgres (Supabase), RLS activado en todas las tablas de la app, también las que `create_all` acaba de crear:
+    una tabla nueva en `public` nace sin RLS y quedaría legible con la clave `anon` vía la API REST. Sin políticas a
+    propósito (ver auditoría en CLAUDE.md): el rol de la app es el dueño y no le afecta. Idempotente."""
+    if engine.dialect.name != "postgresql":
+        return
+    with engine.begin() as conn:
+        for table in Base.metadata.sorted_tables:
+            conn.execute(text(f'ALTER TABLE "{table.name}" ENABLE ROW LEVEL SECURITY'))
 
 
 # Columnas agregadas a un modelo DESPUÉS de que alguien ya corrió `init_db()`
@@ -56,7 +68,7 @@ def init_db() -> None:
 # campo. Es un parche a mano hasta introducir Alembic — solo agrega
 # columnas, nunca borra ni renombra nada.
 _NEW_COLUMNS: dict[str, list[tuple[str, str]]] = {
-    "transactions": [("receipt_path", "VARCHAR(300)")],
+    "transactions": [("receipt_path", "VARCHAR(300)"), ("recurring_income_id", "INTEGER")],
 }
 
 

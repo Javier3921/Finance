@@ -54,6 +54,7 @@ from app.services import balance as balance_service
 from app.services import budgets as budgets_service
 from app.services import config as config_service
 from app.services import settings as settings_service
+from app.services import recurring as recurring_service
 from app.services import storage
 from app.services import transactions as transactions_service
 from app.services.users import get_default_user
@@ -120,8 +121,9 @@ st.caption(
     "sin tocar ningún archivo de código."
 )
 
-tab_dashboard, tab_categorias, tab_comprobantes, tab_presupuestos, tab_metodos, tab_ajustes = st.tabs(
-    ["Dashboard", "Categorías y subcategorías", "Comprobantes", "Presupuestos", "Métodos de pago", "Ajustes generales"]
+tab_dashboard, tab_categorias, tab_comprobantes, tab_presupuestos, tab_recurrentes, tab_metodos, tab_ajustes = st.tabs(
+    ["Dashboard", "Categorías y subcategorías", "Comprobantes", "Presupuestos", "Recurrentes", "Métodos de pago",
+     "Ajustes generales"]
 )
 
 
@@ -633,6 +635,153 @@ with tab_presupuestos:
                 )
             else:
                 st.caption("Ninguna subcategoría tiene un presupuesto propio todavía — elige una arriba para asignarle uno.")
+
+# ================================================================ RECURRENTES
+VENCIMIENTOS = ["Quincena (día 15)", "Fin de mes", "Día específico"]
+
+
+def _vencimiento_input(prefix: str, due_day: int) -> int:
+    """Quincena / fin de mes / día específico -> `due_day` (15, -1 o 1-31)."""
+    if due_day == recurring_service.FIN_DE_MES:
+        idx = 1
+    elif due_day == recurring_service.QUINCENA:
+        idx = 0
+    else:
+        idx = 2
+    opcion = st.radio("Vence", VENCIMIENTOS, index=idx, horizontal=True, key=f"{prefix}_vence")
+    if opcion == VENCIMIENTOS[0]:
+        return recurring_service.QUINCENA
+    if opcion == VENCIMIENTOS[1]:
+        return recurring_service.FIN_DE_MES
+    dia_actual = due_day if 1 <= due_day <= 31 else 1
+    return int(st.number_input(
+        "Día del mes", min_value=1, max_value=31, value=dia_actual, key=f"{prefix}_dia",
+        help="Si el mes tiene menos días (p. ej. 31 en febrero), vence el último día del mes.",
+    ))
+
+
+def _form_gasto_fijo(prefix: str, categorias: list[tuple[int, str]], metodos: list[tuple[int, str]], r: dict | None) -> dict | None:
+    """Widgets de un gasto fijo (nuevo si `r` es None). Devuelve los valores, o None si no hay categorías."""
+    if not categorias:
+        st.info("Crea primero una categoría en la pestaña *Categorías y subcategorías*.")
+        return None
+    r = r or {}
+    nombre = st.text_input("Nombre", value=r.get("name", ""), key=f"{prefix}_nombre", placeholder="ej. Netflix, alquiler")
+    c1, c2 = st.columns(2)
+    cat_ids = [c[0] for c in categorias]
+    cat_id = c1.selectbox(
+        "Categoría", cat_ids, index=cat_ids.index(r["category_id"]) if r.get("category_id") in cat_ids else 0,
+        format_func=dict(categorias).get, key=f"{prefix}_cat",
+    )
+    with get_session() as session:
+        subs = [(s.id, s.name) for s in config_service.list_subcategories(session, cat_id)]
+    sub_ids = [None] + [s[0] for s in subs]
+    sub_id = c2.selectbox(
+        "Subcategoría", sub_ids, index=sub_ids.index(r.get("subcategory_id")) if r.get("subcategory_id") in sub_ids else 0,
+        format_func=lambda i: "(Sin subcategoría)" if i is None else dict(subs)[i], key=f"{prefix}_sub_{cat_id}",
+    )
+    c3, c4 = st.columns(2)
+    monto = c3.number_input("Monto (S/)", min_value=0.0, step=5.0, value=float(r.get("amount", 0.0)), key=f"{prefix}_monto")
+    met_ids = [None] + [m[0] for m in metodos]
+    met_id = c4.selectbox(
+        "Método de pago", met_ids, index=met_ids.index(r.get("payment_method_id")) if r.get("payment_method_id") in met_ids else 0,
+        format_func=lambda i: "(Sin especificar)" if i is None else dict(metodos)[i], key=f"{prefix}_met",
+    )
+    due_day = _vencimiento_input(prefix, r.get("due_day", recurring_service.FIN_DE_MES))
+    c5, c6 = st.columns(2)
+    auto = c5.checkbox("Registrar sin preguntar", value=r.get("auto_confirm", False), key=f"{prefix}_auto",
+                       help="Se registra solo el día que vence y el bot solo avisa. Si no, pregunta con botones.")
+    activo = c6.checkbox("Activo", value=r.get("active", True), key=f"{prefix}_activo")
+    return dict(name=nombre, category_id=cat_id, subcategory_id=sub_id, amount=monto, payment_method_id=met_id,
+                due_day=due_day, auto_confirm=auto, active=activo)
+
+
+def _form_ingreso_fijo(prefix: str, r: dict | None) -> dict:
+    r = r or {}
+    nombre = st.text_input("Nombre", value=r.get("name", ""), key=f"{prefix}_nombre", placeholder="ej. Sueldo")
+    monto = st.number_input("Monto (S/)", min_value=0.0, step=50.0, value=float(r.get("amount", 0.0)), key=f"{prefix}_monto")
+    due_day = _vencimiento_input(prefix, r.get("due_day", recurring_service.FIN_DE_MES))
+    c1, c2 = st.columns(2)
+    auto = c1.checkbox("Registrar sin preguntar", value=r.get("auto_confirm", False), key=f"{prefix}_auto")
+    activo = c2.checkbox("Activo", value=r.get("active", True), key=f"{prefix}_activo")
+    return dict(name=nombre, amount=monto, due_day=due_day, auto_confirm=auto, active=activo)
+
+
+def _botones_guardar_borrar(prefix: str, guardar, borrar) -> None:
+    b1, b2, b3 = st.columns([1, 1, 2])
+    if b1.button("Guardar", key=f"{prefix}_guardar", type="primary"):
+        if run_action(guardar):
+            st.success("Guardado.")
+            st.rerun()
+    seguro = b3.checkbox("Sí, quiero borrarlo", key=f"{prefix}_seguro")
+    if b2.button("Borrar", key=f"{prefix}_borrar", disabled=not seguro):
+        if run_action(borrar):
+            st.success("Borrado. Los movimientos ya registrados se conservan.")
+            st.rerun()
+
+
+with tab_recurrentes:
+    st.subheader("Gastos e ingresos recurrentes")
+    st.caption(
+        "El día que vence cada uno, a las 08:00, el bot te pregunta por Telegram si lo registra "
+        "(Confirmar, Cambiar monto u Omitir este mes). Mientras no respondas, no cuenta en los totales."
+    )
+    with get_session() as session:
+        rec_user_id = get_default_user(session).id
+        rec_categorias = [(c.id, c.name) for c in config_service.list_categories(session, rec_user_id)]
+        rec_metodos = [(m.id, m.name) for m in config_service.list_payment_methods(session, rec_user_id)]
+        gastos_fijos = [
+            dict(id=r.id, name=r.name, category_id=r.category_id, subcategory_id=r.subcategory_id, amount=float(r.amount),
+                 payment_method_id=r.payment_method_id, due_day=r.due_day, auto_confirm=r.auto_confirm,
+                 active=r.status == "activo", categoria=r.category.name if r.category else "")
+            for r in recurring_service.list_recurring_expenses(session, rec_user_id)
+        ]
+        ingresos_fijos = [
+            dict(id=r.id, name=r.name, amount=float(r.amount), due_day=r.due_day, auto_confirm=r.auto_confirm,
+                 active=r.status == "activo")
+            for r in recurring_service.list_recurring_incomes(session, rec_user_id)
+        ]
+
+    st.markdown("#### Gastos fijos")
+    if not gastos_fijos:
+        st.caption("Todavía no hay gastos fijos.")
+    for r in gastos_fijos:
+        estado = "" if r["active"] else " · pausado"
+        titulo = f"{r['name']} — S/ {r['amount']:,.2f} · {r['categoria']} · {recurring_service.describir_vencimiento(r['due_day'])}{estado}"
+        with st.expander(titulo):
+            valores = _form_gasto_fijo(f"gf{r['id']}", rec_categorias, rec_metodos, r)
+            if valores:
+                _botones_guardar_borrar(
+                    f"gf{r['id']}",
+                    lambda s, v=valores, rid=r["id"]: recurring_service.save_recurring_expense(s, rec_user_id, recurring_id=rid, **v),
+                    lambda s, rid=r["id"]: recurring_service.delete_recurring_expense(s, rec_user_id, rid),
+                )
+    with st.expander("➕ Nuevo gasto fijo"):
+        valores = _form_gasto_fijo("gf_nuevo", rec_categorias, rec_metodos, None)
+        if valores and st.button("Crear gasto fijo", key="gf_nuevo_crear", type="primary"):
+            if run_action(lambda s: recurring_service.save_recurring_expense(s, rec_user_id, **valores)):
+                st.success("Creado.")
+                st.rerun()
+
+    st.markdown("#### Ingresos fijos")
+    if not ingresos_fijos:
+        st.caption("Todavía no hay ingresos fijos. Si te pagan en dos partes, crea dos (quincena y fin de mes).")
+    for r in ingresos_fijos:
+        estado = "" if r["active"] else " · pausado"
+        titulo = f"{r['name']} — S/ {r['amount']:,.2f} · {recurring_service.describir_vencimiento(r['due_day'])}{estado}"
+        with st.expander(titulo):
+            valores = _form_ingreso_fijo(f"if{r['id']}", r)
+            _botones_guardar_borrar(
+                f"if{r['id']}",
+                lambda s, v=valores, rid=r["id"]: recurring_service.save_recurring_income(s, rec_user_id, recurring_id=rid, **v),
+                lambda s, rid=r["id"]: recurring_service.delete_recurring_income(s, rec_user_id, rid),
+            )
+    with st.expander("➕ Nuevo ingreso fijo"):
+        valores = _form_ingreso_fijo("if_nuevo", None)
+        if st.button("Crear ingreso fijo", key="if_nuevo_crear", type="primary"):
+            if run_action(lambda s: recurring_service.save_recurring_income(s, rec_user_id, **valores)):
+                st.success("Creado.")
+                st.rerun()
 
 # ============================================================ MÉTODOS DE PAGO
 with tab_metodos:

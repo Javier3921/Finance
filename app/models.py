@@ -141,9 +141,10 @@ class BudgetPeriod(Base):
 class RecurringExpense(Base):
     """Gasto fijo recurrente (ej. gimnasio, suscripciones).
 
-    No genera el movimiento en silencio: `app/services/recurring.py` (fase
-    siguiente) crea un borrador pendiente de confirmación cada mes, salvo que
-    `auto_confirm` esté activo para ese gasto en particular.
+    No genera el movimiento en silencio: `app/services/recurring.py` crea un
+    movimiento pendiente de confirmación cada mes, salvo que `auto_confirm`
+    esté activo para ese gasto en particular. `due_day`: 1-31 (si el mes es
+    más corto, su último día) o -1 = fin de mes; la quincena es el 15.
     """
 
     __tablename__ = "recurring_expenses"
@@ -162,6 +163,26 @@ class RecurringExpense(Base):
     created_at: Mapped[dt.datetime] = mapped_column(DateTime, server_default=func.now())
 
     user: Mapped[User] = relationship(back_populates="recurring_expenses")
+    category: Mapped["Category"] = relationship()
+    subcategory: Mapped["Subcategory | None"] = relationship()
+    payment_method: Mapped["PaymentMethod | None"] = relationship()
+
+
+class RecurringIncome(Base):
+    """Ingreso fijo (sueldo). Mismo mecanismo y mismo `due_day` que `RecurringExpense`, sin categoría: un sueldo
+    pagado en dos partes son dos ingresos fijos (quincena y fin de mes)."""
+
+    __tablename__ = "recurring_incomes"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    name: Mapped[str] = mapped_column(String(120))
+    amount: Mapped[Decimal] = mapped_column(MONEY)
+    frequency: Mapped[str] = mapped_column(String(20), default="mensual")
+    due_day: Mapped[int] = mapped_column(Integer, default=-1)
+    auto_confirm: Mapped[bool] = mapped_column(Boolean, default=False)
+    status: Mapped[str] = mapped_column(String(20), default="activo")
+    created_at: Mapped[dt.datetime] = mapped_column(DateTime, server_default=func.now())
 
 
 class Transaction(Base):
@@ -175,6 +196,9 @@ class Transaction(Base):
     subcategory_id: Mapped[int | None] = mapped_column(ForeignKey("subcategories.id"), nullable=True)
     payment_method_id: Mapped[int | None] = mapped_column(ForeignKey("payment_methods.id"), nullable=True)
     recurring_expense_id: Mapped[int | None] = mapped_column(ForeignKey("recurring_expenses.id"), nullable=True)
+    # Sin ForeignKey a propósito: en bases existentes llega con ALTER TABLE ADD COLUMN (app/db.py), que no crea la
+    # restricción; así el modelo y la base real coinciden. El servicio desvincula antes de borrar un ingreso fijo.
+    recurring_income_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
     description: Mapped[str] = mapped_column(String(200))
     amount: Mapped[Decimal] = mapped_column(MONEY)
