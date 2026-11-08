@@ -14,7 +14,7 @@ cada presupuesto del mes y la galería de comprobantes.
 ![Streamlit](https://img.shields.io/badge/Streamlit-dashboard-FF4B4B?logo=streamlit&logoColor=white)
 ![Supabase](https://img.shields.io/badge/Supabase-Postgres%20%2B%20Storage-3ECF8E?logo=supabase&logoColor=white)
 ![Oracle Cloud](https://img.shields.io/badge/Oracle%20Cloud-Always%20Free-F80000?logo=oracle&logoColor=white)
-![Tests](https://img.shields.io/badge/tests-42%20passing-2EA44F)
+[![Tests](https://github.com/Javier3921/Finance/actions/workflows/tests.yml/badge.svg)](https://github.com/Javier3921/Finance/actions/workflows/tests.yml)
 
 ---
 
