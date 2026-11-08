@@ -88,7 +88,7 @@ flowchart TB
 
     subgraph SUPA["Supabase · Free tier"]
         POOLER["Connection pooler<br/>modo Transaction :6543"]
-        PG[("PostgreSQL<br/>10 tablas · RLS")]
+        PG[("PostgreSQL<br/>11 tablas · RLS")]
         STORAGE[["Storage<br/>bucket privado 'receipts'"]]
         POOLER --> PG
     end
@@ -476,6 +476,23 @@ flowchart LR
 Los tres umbrales se leen de la tabla `settings` (valores por defecto 70 /
 85 / 100) y se editan desde el panel.
 
+### 7.5 Recurrentes y tareas programadas (`services/recurring.py`, `bot/jobs.py`)
+
+- Cada gasto o ingreso fijo vence por **quincena** (día 15), **fin de mes**
+  (`due_day = -1`) o un **día concreto**; si el mes es más corto, vence su
+  último día.
+- El `JobQueue` de python-telegram-bot ejecuta `generar_vencidos` cada día a
+  las 08:00 (Lima) y una vez al arrancar. Crea **un movimiento por
+  recurrente y mes**, pendiente (o confirmado si *Registrar sin preguntar*),
+  y el bot pregunta con *Confirmar / Cambiar monto / Omitir este mes*.
+- Idempotente: si ya existe un movimiento de ese recurrente en el mes, en
+  cualquier estado, no se crea otro. Revisa también el mes anterior por si el
+  bot estuvo apagado en el cambio de mes, y nunca genera vencimientos
+  anteriores a la creación del recurrente.
+- Los pendientes y omitidos no cuentan en ningún total. El resumen semanal
+  (lunes 08:00, o `/semana`) reutiliza los mismos servicios de balance,
+  presupuestos y recurrentes.
+
 ## 8. Dashboard y panel de configuración
 
 Una sola app de Streamlit (`app/webapp/config_app.py`) organizada en
@@ -553,7 +570,7 @@ flowchart LR
         C0["Bot: lista blanca de chat_id<br/>(falla cerrado)"]
         C1["Dashboard: contraseña obligatoria<br/>(falla cerrado)"]
         C2["VM: único ingress SSH 22<br/>restringido a una IP /32"]
-        C3["Postgres: rol de app no-superusuario<br/>+ RLS en las 10 tablas"]
+        C3["Postgres: rol de app no-superusuario<br/>+ RLS en todas las tablas (init_db)"]
         C4["Storage: bucket privado<br/>+ URLs firmadas de 1 h"]
         C5["Secretos solo en variables de entorno<br/>(.env ignorado por git)"]
     end
@@ -582,9 +599,14 @@ una app personal de un solo usuario.
 
 ## 11. Estrategia de testing
 
-- **94 tests** con `pytest` sobre la capa de servicios, que concentra la
-  lógica: presupuestos y prorrateo, alta y validación de movimientos, CRUD
-  de configuración, ajustes y parser NLP.
+- **171 tests** con `pytest`, sobre todo en la capa de servicios, que
+  concentra la lógica: presupuestos y prorrateo, alta y validación de
+  movimientos, ingresos y balance, recurrentes, resumen semanal, CRUD de
+  configuración, ajustes y parser NLP. Los flujos del bot se prueban con
+  objetos de Telegram simulados.
+- **CI en GitHub Actions** (`.github/workflows/tests.yml`): la batería
+  completa en cada push y pull request a `main`, con Python 3.10 (la VM) y
+  3.12 (Streamlit Cloud).
 - Cada test recibe una **base SQLite en memoria nueva** (`tests/conftest.py`):
   aislamiento total, ejecución en segundos, sin token de Telegram, sin
   internet y sin Supabase.
@@ -599,14 +621,17 @@ una app personal de un solo usuario.
 | `test_settings.py` | valores por defecto, sobrescritura, sembrado inicial que no pisa valores existentes |
 | `test_nlp.py` | monto y categoría, decimal con coma, categoría desconocida, sin monto, fechas relativas "ayer" y "anteayer" |
 | `test_access.py` | parseo de `ALLOWED_CHAT_IDS` (vacío, negativos, inválido) y decisión de acceso |
+| `test_ingresos.py` | tipo `ingreso` sin categoría, balance y tasa de ahorro (también sin ingresos), frases de ingreso frente a gasto, flujo `/ingreso` |
+| `test_deshacer.py` | último movimiento, borrado con desglose y foto, confirmación, botón viejo, aislamiento entre usuarios |
+| `test_recurrentes.py` | vencimientos (quincena, fin de mes, 31 en febrero, bisiesto), sin duplicados, mes anterior, creación en hora de Lima, *auto_confirm*, confirmar / cambiar monto / omitir, aviso diario, CRUD |
+| `test_resumen_semanal.py` | semana anterior con cruce de mes y de año, cifras y texto, semana vacía, envío programado y `/semana` |
 
 ## 12. Limitaciones y roadmap
 
 **Limitaciones conocidas**
 
 - El registro por texto y por foto guarda siempre el gasto como *variable*.
-- `RecurringExpense` existe en el modelo, pero aún no hay un job que genere
-  el borrador mensual.
+- Los recurrentes solo admiten frecuencia mensual.
 - `/ahorro` e `/inversion` aún no existen como comandos (el modelo ya los
   soporta).
 - Migraciones: `init_db()` agrega columnas nuevas automáticamente
@@ -618,7 +643,8 @@ una app personal de un solo usuario.
 
 | Fase | Elemento |
 |---|---|
-| Corto plazo | Job de gastos recurrentes (`JobQueue` de python-telegram-bot); comandos `/ahorro` e `/inversion`; inferir fijo/variable por categoría; ping diario para evitar la pausa de Supabase |
+| Hecho (2026-11) | Ingresos reales y balance; `/deshacer`; gastos e ingresos recurrentes con aviso diario; resumen semanal; CI |
+| Corto plazo | Comandos `/ahorro` e `/inversion`; inferir fijo/variable por categoría; ping diario para evitar la pausa de Supabase |
 | Fase 2 | OCR del comprobante: monto ya hecho con visión; falta comercio y fecha; Alembic; login multiusuario (el esquema ya tiene `user_id`) |
 | Fase 3 | Comparativas mes a mes, detección de anomalías, proyección de fin de mes; notificaciones proactivas del bot |
 

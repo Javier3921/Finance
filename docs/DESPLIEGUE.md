@@ -129,7 +129,8 @@ python3 -m venv .venv && . .venv/bin/activate
 pip install --upgrade pip
 
 # Solo lo que usa el bot (sin streamlit/pandas/altair)
-pip install "python-telegram-bot>=21,<22" "SQLAlchemy>=2.0,<3.0" \
+# [job-queue] añade APScheduler: avisos de recurrentes y resumen semanal
+pip install "python-telegram-bot[job-queue]>=21,<22" "SQLAlchemy>=2.0,<3.0" \
             "python-dotenv>=1.0,<2.0" "psycopg[binary]>=3.1,<4.0" "supabase>=2.0,<3.0"
 ```
 
@@ -214,4 +215,5 @@ is-active finanzas-bot` debe responder `active` sin intervención.
 | El bot no responde nada (y el log dice "chat no autorizado") | Tu `chat_id` no está en la lista | Revisar el número en `.env` (los grupos tienen `chat_id` negativo) |
 | Respuestas intermitentes o con código viejo | Dos procesos del bot con el mismo token | Dejar solo el servicio `systemd`; matar procesos locales |
 | Bot y dashboard dejan de responder tras días sin uso | Supabase Free pausó el proyecto | Reactivarlo desde el panel de Supabase |
+| No llegan los avisos de recurrentes ni el resumen de los lunes (el log dice "JobQueue no disponible") | Falta el extra `[job-queue]` en la VM | `pip install "python-telegram-bot[job-queue]>=21,<22"` en el venv y reiniciar el servicio |
 | SSH deja de conectar | Cambió tu IP pública (regla `/32`) o la IP efímera de la VM | Actualizar la *Security List* desde la consola web; reservar una IP pública si hace falta |

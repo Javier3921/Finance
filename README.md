@@ -25,9 +25,13 @@ cada presupuesto del mes y la galería de comprobantes.
 | 💬 | **Registro por lenguaje natural** — "gasté 35 en almuerzo ayer" → monto, categoría, subcategoría y fecha, sin IA (parser determinístico). |
 | 📸 | **Registro con foto de comprobante** — la foto se guarda en un bucket privado y queda enlazada al movimiento. |
 | 🧭 | **Flujo guiado con botones** (`/gasto`) — tipo → categoría → subcategoría → monto → confirmar. |
+| 💰 | **Ingresos reales** (`/ingreso` o "me pagaron 1500 del freelance") — balance y tasa de ahorro en el dashboard y en `/resumen`. |
+| 🔁 | **Gastos e ingresos recurrentes** — vencen por quincena, fin de mes o un día concreto; el bot pregunta ese día a las 08:00 con *Confirmar / Cambiar monto / Omitir este mes* (`/pendientes`). |
+| 🗓️ | **Resumen semanal automático** los lunes a las 08:00 (o cuando quieras con `/semana`). |
+| ↩️ | **`/deshacer`** — borra el último movimiento, con confirmación. |
 | 📊 | **Presupuestos por categoría y subcategoría** con alertas por umbral (aviso / alerta / excedido) e historial que nunca reescribe meses pasados. |
 | 📈 | **Dashboard web** — KPIs, gasto por categoría, fijo vs. variable, evolución en el tiempo, galería de comprobantes. |
-| ⚙️ | **Todo configurable sin tocar código** — categorías, presupuestos, métodos de pago, ingreso mensual y umbrales viven en la base de datos. |
+| ⚙️ | **Todo configurable sin tocar código** — categorías, presupuestos, recurrentes, métodos de pago y umbrales viven en la base de datos. |
 | 🔒 | **Bot restringido a chats autorizados**, dashboard protegido con contraseña, bucket de fotos privado, base de datos con rol de mínimo privilegio y RLS. |
 
 ## Arquitectura en un vistazo
@@ -86,7 +90,7 @@ presupuesto editado en el dashboard lo usa el bot en el siguiente mensaje.
 | Hosting del bot | Oracle Cloud Always Free (ARM Ampere A1) + `systemd` | 24/7, reinicio automático, S/0 |
 | Dashboard | Streamlit + Altair + pandas en Streamlit Community Cloud | Redeploy automático en cada `git push` |
 | Lenguaje natural | Regex + diccionario de palabras clave | Gratis, instantáneo y 100 % predecible |
-| Tests | pytest sobre SQLite en memoria | 94 tests, sin token, sin internet, sin Supabase |
+| Tests | pytest sobre SQLite en memoria | 171 tests, sin token, sin internet, sin Supabase; CI en GitHub Actions |
 
 ## Documentación
 
@@ -102,9 +106,12 @@ presupuesto editado en el dashboard lo usa el bot en el siguiente mensaje.
 app/
 ├── config.py              # configuración desde variables de entorno
 ├── db.py                  # motor SQLAlchemy, sesión y migraciones ligeras
-├── models.py              # esquema completo (10 tablas)
+├── models.py              # esquema completo (11 tablas)
 ├── services/              # lógica de negocio pura (sin Telegram ni Streamlit)
-│   ├── transactions.py    #   alta y consulta de movimientos
+│   ├── transactions.py    #   alta, consulta y borrado de movimientos
+│   ├── balance.py         #   ingresos, gastos, balance y tasa de ahorro
+│   ├── recurring.py       #   gastos e ingresos fijos: vencimientos y generación
+│   ├── resumen.py         #   resumen de la semana anterior
 │   ├── budgets.py         #   presupuesto vs. gastado, umbrales, prorrateo
 │   ├── config.py          #   CRUD de categorías, subcategorías, métodos, presupuestos
 │   ├── settings.py        #   ajustes clave-valor (ingreso, umbrales)
@@ -116,10 +123,11 @@ app/
 │   ├── main.py            # arma la Application y registra handlers
 │   ├── access.py          # lista blanca de chats (ALLOWED_CHAT_IDS)
 │   ├── formatting.py
-│   └── handlers/          # /gasto, texto libre, fotos, /presupuesto, /resumen
+│   ├── jobs.py            # tareas programadas: recurrentes y resumen semanal
+│   └── handlers/          # /gasto, /ingreso, /deshacer, /pendientes, /semana, texto libre, fotos…
 └── webapp/
     └── config_app.py      # dashboard + panel de configuración (Streamlit)
-tests/                     # 94 tests (pytest)
+tests/                     # pytest, también en GitHub Actions
 deploy/finanzas-bot.service  # unidad systemd de referencia para el bot
 docs/                      # análisis técnico y guía de despliegue
 preview/dashboard.html     # mockup visual
@@ -138,7 +146,7 @@ pip install -r requirements.txt
 cp .env.example .env              # completar TELEGRAM_BOT_TOKEN y DASHBOARD_PASSWORD
 
 python -m app.services.seed       # crea finanzas.db con datos iniciales
-python -m pytest                  # 94 tests
+python -m pytest                  # 171 tests
 
 python -m app.bot.main                    # bot
 streamlit run app/webapp/config_app.py    # dashboard en http://localhost:8501
@@ -168,7 +176,8 @@ Lo que conviene adaptar:
 | Categorías, subcategorías, presupuestos y métodos de pago iniciales | `app/services/seed.py` (después se editan desde el dashboard) |
 | Palabras clave del registro por texto libre ("almuerzo" → Comida) | `_KEYWORDS` en `app/services/nlp.py`, deben coincidir con los nombres de tus categorías |
 | Moneda | `DEFAULT_CURRENCY` en `.env`; los textos del bot y del parser asumen soles (`S/`) |
-| Ingreso mensual inicial | `MONTHLY_INCOME` en `.env` (después se edita desde el dashboard) |
+| Frases de ingreso y conceptos ("me pagaron" → ingreso, "sueldo" → Sueldo) | `_INCOME_RE` e `_INCOME_KEYWORDS` en `app/services/nlp.py` |
+| Hora de los avisos y del resumen semanal | `HORA_AVISOS` y `LUNES` en `app/bot/jobs.py` |
 | Zona horaria (define qué es "hoy") | La del servidor: `timedatectl set-timezone` en la VM |
 
 ## Estado
@@ -176,10 +185,12 @@ Lo que conviene adaptar:
 ✅ En producción y funcionando 24/7 (bot en Oracle Cloud, dashboard en
 Streamlit Community Cloud, datos en Supabase), costo mensual **S/0**.
 
-Próximos pasos: gastos recurrentes automáticos, comandos `/ahorro` e
-`/inversion`, migraciones versionadas con Alembic y el OCR de comprobantes
-(ya existe con Gemini, opcional: ver `GEMINI_API_KEY` en `.env.example`) —
-detalle en el [roadmap](docs/ANALISIS_TECNICO.md#12-limitaciones-y-roadmap).
+Los tests corren en GitHub Actions en cada push (Python 3.10 y 3.12). La
+lectura del importe de la foto con Gemini es opcional (`GEMINI_API_KEY` en
+`.env.example`).
+
+Próximos pasos: comandos `/ahorro` e `/inversion`, migraciones versionadas
+con Alembic — detalle en el [roadmap](docs/ANALISIS_TECNICO.md#12-limitaciones-y-roadmap).
 
 ## Licencia
 
