@@ -19,6 +19,7 @@ from app.config import settings
 from app.db import get_session
 from app.models import User
 from app.services import recurring as recurring_service
+from app.services.resumen import construir_resumen, texto_resumen
 from app.services.tiempo import LIMA, hoy
 
 logger = logging.getLogger(__name__)
@@ -52,6 +53,17 @@ async def revisar_recurrentes(context: ContextTypes.DEFAULT_TYPE) -> None:
                 logger.warning("No se pudo avisar del recurrente %s al chat %s", tx_id, chat_id, exc_info=True)
 
 
+async def enviar_resumen_semanal(context: ContextTypes.DEFAULT_TYPE) -> None:
+    today = hoy()
+    for chat_id, user_id in _usuarios_destino():
+        with get_session() as session:
+            texto = texto_resumen(construir_resumen(session, user_id, today))
+        try:
+            await context.bot.send_message(chat_id, texto)
+        except Exception:  # noqa: BLE001 - se puede pedir igual con /semana
+            logger.warning("No se pudo enviar el resumen semanal al chat %s", chat_id, exc_info=True)
+
+
 def programar(application: Application) -> None:
     jq = application.job_queue
     if jq is None:
@@ -60,3 +72,4 @@ def programar(application: Application) -> None:
         return
     jq.run_once(revisar_recurrentes, when=15, name="recurrentes_al_arrancar")
     jq.run_daily(revisar_recurrentes, time=HORA_AVISOS, name="recurrentes_diario")
+    jq.run_daily(enviar_resumen_semanal, time=HORA_AVISOS, days=(LUNES,), name="resumen_semanal")

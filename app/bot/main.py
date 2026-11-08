@@ -37,6 +37,7 @@ def build_application() -> Application:
     application.add_handler(CommandHandler("start", summary.start_command))
     application.add_handler(CommandHandler("presupuesto", summary.presupuesto_command))
     application.add_handler(CommandHandler("resumen", summary.resumen_command))
+    application.add_handler(CommandHandler("semana", summary.semana_command))
     for handler in undo.build_handlers():
         application.add_handler(handler)
 

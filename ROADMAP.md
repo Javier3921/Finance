@@ -26,8 +26,8 @@ Detalle de cada punto y criterios de aceptación en [`SPEC.md`](SPEC.md). Marcar
 - [x] `/pendientes`
 
 ## Fase 5 — Resumen semanal
-- [ ] Servicio del resumen de la semana anterior
-- [ ] Job de los lunes 08:00 y `/semana`
+- [x] Servicio del resumen de la semana anterior
+- [x] Job de los lunes 08:00 y `/semana`
 
 ## Fase 6 — Despliegue
 - [ ] VM: instalar `python-telegram-bot[job-queue]`, `git pull`, reiniciar

@@ -11,6 +11,7 @@ from app.bot.formatting import budget_line, money
 from app.db import get_session
 from app.services.balance import calcular_balance
 from app.services.budgets import category_budget_statuses
+from app.services.resumen import construir_resumen, texto_resumen
 from app.services.transactions import list_transactions
 from app.services.users import get_or_create_user_for_chat
 
@@ -20,6 +21,7 @@ COMMANDS_HELP = (
     "/ingreso — registrar un ingreso (sueldo, freelance…)\n"
     "/presupuesto — cuánto llevas gastado por categoría este mes\n"
     "/resumen — resumen del mes\n"
+    "/semana — resumen de la semana pasada (llega solo cada lunes a las 08:00)\n"
     "/deshacer — borrar el último movimiento (con confirmación)\n"
     "/pendientes — gastos e ingresos fijos por confirmar\n\n"
     "También puedes escribirme directo, por ejemplo:\n"
@@ -78,3 +80,10 @@ async def resumen_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         f"\nMovimientos registrados: {len(gastos) + len(ahorros_inversion) + n_ingresos}",
     ]
     await update.message.reply_text("\n".join(lines))
+
+
+async def semana_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    with get_session() as session:
+        user = get_or_create_user_for_chat(session, update.effective_chat.id, update.effective_user.first_name or "Usuario")
+        texto = texto_resumen(construir_resumen(session, user.id, hoy()))
+    await update.message.reply_text(texto)
