@@ -29,7 +29,18 @@ Detalle de cada punto y criterios de aceptación en [`SPEC.md`](SPEC.md). Marcar
 - [x] Servicio del resumen de la semana anterior
 - [x] Job de los lunes 08:00 y `/semana`
 
-## Fase 6 — Despliegue
-- [ ] VM: instalar `python-telegram-bot[job-queue]`, `git pull`, reiniciar
-- [ ] Prueba real en Telegram de cada comando
-- [ ] Actualizar README, `docs/ANALISIS_TECNICO.md` y el `CLAUDE.md` local
+## Revisión independiente (2026-11-07)
+- [x] 10 hallazgos de un revisor independiente, todos corregidos con test (commit `9f935a0`); los graves reproducidos con
+  los handlers reales y una API de Telegram falsa
+
+## Fase 6 — Despliegue (EN CURSO, 2026-11-08)
+- [x] Actualizar README, `docs/ANALISIS_TECNICO.md` y `docs/DESPLIEGUE.md`
+- [ ] Javier: en el SQL Editor de Supabase, `select has_schema_privilege('finanzas_app', 'public', 'CREATE');`
+  debe dar `true` (si no, la tabla nueva no se crea y el bot entra en bucle de reinicios)
+- [ ] Push de los commits locales (`ac3279d`, `c2f9cb4`, `6565e78`, `9f935a0` y este) y CI en verde. Al subir,
+  Streamlit aplica solo el esquema nuevo: tabla `recurring_incomes`, columna `transactions.recurring_income_id` y RLS
+- [ ] VM: `git pull`, `pip install "python-telegram-bot[job-queue]>=21,<22"` en el venv, reiniciar
+- [ ] Prueba real en Telegram: `/start`, `/ingreso`, `/semana`, `/deshacer`, y un gasto fijo que venza hoy
+  (reiniciar el bot: el aviso llega a los ~15 s)
+- [ ] Ver el dashboard en un navegador real (móvil y escritorio): solo se probó con `AppTest`
+- [ ] Actualizar el `CLAUDE.md` local con el estado final
