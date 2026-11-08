@@ -7,7 +7,8 @@ Reglas:
   llegó, UN movimiento ese mes: pendiente, o confirmado si `auto_confirm`. Mira también el mes anterior por si el bot
   estuvo apagado justo en el cambio de mes.
 - Nunca duplica: si ya hay un movimiento de ese recurrente en ese mes, en cualquier estado (también omitido), no hace
-  nada. Un recurrente no genera vencimientos anteriores a su fecha de creación.
+  nada. Un recurrente no genera vencimientos anteriores a su fecha de creación (o de reactivación, si estuvo
+  pausado: `created_at` se mueve al reactivarlo).
 - Los pendientes y omitidos no cuentan en los totales (regla de `list_transactions` y `balance`).
 """
 from __future__ import annotations
@@ -74,6 +75,12 @@ def _validar_nombre(name: str) -> str:
 
 
 # ------------------------------------------------------------------------------------------------------------- CRUD
+def _al_reactivar(r, nuevo_status: str) -> None:
+    """Pausado -> activo: `created_at` pasa a ser "activo desde" ahora, para no generar los meses en pausa."""
+    if r.status == "pausado" and nuevo_status == "activo":
+        r.created_at = dt.datetime.now(dt.timezone.utc).replace(tzinfo=None)
+
+
 def list_recurring_expenses(session: Session, user_id: int) -> list[RecurringExpense]:
     return list(session.scalars(select(RecurringExpense).where(RecurringExpense.user_id == user_id).order_by(RecurringExpense.name)))
 
@@ -117,6 +124,7 @@ def save_recurring_expense(
         r = session.get(RecurringExpense, recurring_id)
         if r is None or r.user_id != user_id:
             raise ConfigError("Ese gasto fijo ya no existe")
+        _al_reactivar(r, valores["status"])
         for campo, valor in valores.items():
             setattr(r, campo, valor)
     session.flush()
@@ -138,6 +146,7 @@ def save_recurring_income(
         r = session.get(RecurringIncome, recurring_id)
         if r is None or r.user_id != user_id:
             raise ConfigError("Ese ingreso fijo ya no existe")
+        _al_reactivar(r, valores["status"])
         for campo, valor in valores.items():
             setattr(r, campo, valor)
     session.flush()

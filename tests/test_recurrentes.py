@@ -249,17 +249,81 @@ def test_botones_confirmar_y_omitir(session, user, cat, bot):
     assert "ya estaba omitido" in otra_vez.callback_query.edit_message_text.call_args.args[0]
 
 
-def test_cambiar_monto(session, user, cat, bot):
+class FakeBot:
+    """send_message devuelve un mensaje con message_id creciente, como Telegram."""
+
+    def __init__(self):
+        self.enviados = []
+
+    async def send_message(self, chat_id, text, reply_markup=None):
+        self.enviados.append((text, reply_markup))
+        return SimpleNamespace(message_id=100 + len(self.enviados))
+
+
+def _respuesta(texto, a_mensaje):
+    update = FakeUpdate(text=texto)
+    update.message.reply_to_message = SimpleNamespace(message_id=a_mensaje) if a_mensaje else None
+    return update
+
+
+def _responder(update, context):
+    """on_amount_reply corta los demás handlers con ApplicationHandlerStop cuando atiende el mensaje."""
+    try:
+        asyncio.run(handlers.on_amount_reply(update, context))
+    except handlers.ApplicationHandlerStop:
+        return True
+    return False
+
+
+def test_cambiar_monto_respondiendo_a_la_pregunta(session, user, cat, bot):
     _gasto_fijo(session, user, cat, 5)
     [tx] = [t for t in rs.generar_vencidos(session, user.id, HOY) if t.date.month == 11]
-    context = SimpleNamespace(user_data={})
+    context = SimpleNamespace(user_data={}, chat_data={}, bot=FakeBot())
 
-    estado = asyncio.run(handlers.on_change_amount(FakeUpdate(data=f"rec_amt:{tx.id}"), context))
-    assert estado == handlers.ENTERING_AMOUNT
-    assert asyncio.run(handlers.on_amount_entered(FakeUpdate(text="abc"), context)) == handlers.ENTERING_AMOUNT
-    asyncio.run(handlers.on_amount_entered(FakeUpdate(text="52.50"), context))
+    asyncio.run(handlers.on_change_amount(FakeUpdate(data=f"rec_amt:{tx.id}"), context))
+    assert context.bot.enviados[0][0].startswith("¿Cuál fue el monto real de Netflix?")
+    pregunta = 101
+
+    assert _responder(_respuesta("abc", pregunta), context)  # monto ilegible: vuelve a preguntar
+    assert tx.status == "pendiente"
+    assert _responder(_respuesta("52.50", 102), context)
 
     assert (tx.status, tx.amount) == ("confirmado", Decimal("52.50"))
+
+
+def test_un_texto_que_no_responde_a_la_pregunta_sigue_su_camino(session, user, cat, bot):
+    _gasto_fijo(session, user, cat, 5)
+    [tx] = [t for t in rs.generar_vencidos(session, user.id, HOY) if t.date.month == 11]
+    context = SimpleNamespace(user_data={}, chat_data={}, bot=FakeBot())
+    asyncio.run(handlers.on_change_amount(FakeUpdate(data=f"rec_amt:{tx.id}"), context))
+
+    assert not _responder(_respuesta("almuerzo 25", None), context)  # texto libre normal: no lo atiende
+    assert not _responder(_respuesta("25", 999), context)  # respuesta a otro mensaje: tampoco
+    context.user_data.clear()  # lo que haría otro flujo: no afecta a la pregunta pendiente
+    assert _responder(_respuesta("47", 101), context)
+    assert tx.amount == Decimal("47.00")
+
+
+def test_cambiar_monto_de_dos_recurrentes_a_la_vez(session, user, cat, bot):
+    _gasto_fijo(session, user, cat, 5, name="Luz")
+    _gasto_fijo(session, user, cat, 6, name="Agua")
+    txs = {t.description: t for t in rs.generar_vencidos(session, user.id, HOY) if t.date.month == 11}
+    context = SimpleNamespace(user_data={}, chat_data={}, bot=FakeBot())
+
+    asyncio.run(handlers.on_change_amount(FakeUpdate(data=f"rec_amt:{txs['Luz'].id}"), context))   # pregunta 101
+    asyncio.run(handlers.on_change_amount(FakeUpdate(data=f"rec_amt:{txs['Agua'].id}"), context))  # pregunta 102
+    _responder(_respuesta("30", 102), context)
+    _responder(_respuesta("60", 101), context)
+
+    assert (txs["Luz"].amount, txs["Agua"].amount) == (Decimal("60.00"), Decimal("30.00"))
+
+
+def test_reactivar_un_pausado_no_genera_los_meses_en_pausa(session, user, cat):
+    r = _gasto_fijo(session, user, cat, 20, created_at=dt.datetime(2026, 9, 1, 12, 0), active=False)
+    rs.save_recurring_expense(session, user.id, recurring_id=r.id, name="Netflix", category_id=cat.id, amount=45,
+                              due_day=20, active=True)
+    assert rs.generar_vencidos(session, user.id, HOY) == []  # ni el 20/10 ni nada anterior
+    assert [t.date for t in rs.generar_vencidos(session, user.id, dt.date(2026, 11, 20))] == [dt.date(2026, 11, 20)]
 
 
 def test_pendientes_command(session, user, cat, bot):

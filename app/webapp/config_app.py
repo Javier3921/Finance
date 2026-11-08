@@ -90,7 +90,15 @@ def _require_password() -> None:
 
 _require_password()
 
-init_db()
+
+@st.cache_resource
+def _init_db_una_vez() -> bool:
+    """Streamlit re-ejecuta el script en cada clic: el esquema se revisa una sola vez por proceso."""
+    init_db()
+    return True
+
+
+_init_db_una_vez()
 
 MESES = [
     "enero", "febrero", "marzo", "abril", "mayo", "junio",
@@ -674,7 +682,8 @@ def _form_gasto_fijo(prefix: str, categorias: list[tuple[int, str]], metodos: li
         format_func=dict(categorias).get, key=f"{prefix}_cat",
     )
     with get_session() as session:
-        subs = [(s.id, s.name) for s in config_service.list_subcategories(session, cat_id)]
+        subs = [(s.id, s.name + ("" if s.is_active else " (inactiva)"))
+                for s in config_service.list_subcategories(session, cat_id, include_inactive=True)]
     sub_ids = [None] + [s[0] for s in subs]
     sub_id = c2.selectbox(
         "Subcategoría", sub_ids, index=sub_ids.index(r.get("subcategory_id")) if r.get("subcategory_id") in sub_ids else 0,
@@ -707,6 +716,12 @@ def _form_ingreso_fijo(prefix: str, r: dict | None) -> dict:
     return dict(name=nombre, amount=monto, due_day=due_day, auto_confirm=auto, active=activo)
 
 
+def _limpiar_formulario(prefix: str) -> None:
+    """Vacía los widgets de un alta tras crear: si no, otro clic en "Crear" duplicaría el recurrente."""
+    for clave in [k for k in st.session_state if str(k).startswith(prefix)]:
+        del st.session_state[clave]
+
+
 def _botones_guardar_borrar(prefix: str, guardar, borrar) -> None:
     b1, b2, b3 = st.columns([1, 1, 2])
     if b1.button("Guardar", key=f"{prefix}_guardar", type="primary"):
@@ -728,8 +743,11 @@ with tab_recurrentes:
     )
     with get_session() as session:
         rec_user_id = get_default_user(session).id
-        rec_categorias = [(c.id, c.name) for c in config_service.list_categories(session, rec_user_id)]
-        rec_metodos = [(m.id, m.name) for m in config_service.list_payment_methods(session, rec_user_id)]
+        # Con las inactivas: si un gasto fijo apunta a una, editarlo no debe cambiarla en silencio por la primera.
+        rec_categorias = [(c.id, c.name + ("" if c.is_active else " (inactiva)"))
+                          for c in config_service.list_categories(session, rec_user_id, include_inactive=True)]
+        rec_metodos = [(m.id, m.name + ("" if m.is_active else " (inactivo)"))
+                       for m in config_service.list_payment_methods(session, rec_user_id, include_inactive=True)]
         gastos_fijos = [
             dict(id=r.id, name=r.name, category_id=r.category_id, subcategory_id=r.subcategory_id, amount=float(r.amount),
                  payment_method_id=r.payment_method_id, due_day=r.due_day, auto_confirm=r.auto_confirm,
@@ -760,7 +778,7 @@ with tab_recurrentes:
         valores = _form_gasto_fijo("gf_nuevo", rec_categorias, rec_metodos, None)
         if valores and st.button("Crear gasto fijo", key="gf_nuevo_crear", type="primary"):
             if run_action(lambda s: recurring_service.save_recurring_expense(s, rec_user_id, **valores)):
-                st.success("Creado.")
+                _limpiar_formulario("gf_nuevo")
                 st.rerun()
 
     st.markdown("#### Ingresos fijos")
@@ -780,7 +798,7 @@ with tab_recurrentes:
         valores = _form_ingreso_fijo("if_nuevo", None)
         if st.button("Crear ingreso fijo", key="if_nuevo_crear", type="primary"):
             if run_action(lambda s: recurring_service.save_recurring_income(s, rec_user_id, **valores)):
-                st.success("Creado.")
+                _limpiar_formulario("if_nuevo")
                 st.rerun()
 
 # ============================================================ MÉTODOS DE PAGO

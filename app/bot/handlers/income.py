@@ -12,6 +12,7 @@ import re
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import CallbackQueryHandler, CommandHandler, ContextTypes, ConversationHandler, MessageHandler, filters
 
+from app.bot import conversaciones
 from app.bot.formatting import money
 from app.db import get_session
 from app.services.balance import calcular_balance
@@ -262,6 +263,7 @@ def build_handlers() -> list:
             ],
         },
         fallbacks=[CommandHandler("cancelar", on_cancel)],
+        conversation_timeout=conversaciones.TIMEOUT_S,
         name="registrar_ingreso",
     )
     return [

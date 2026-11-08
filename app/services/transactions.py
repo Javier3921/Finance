@@ -187,10 +187,30 @@ def list_transactions(
 
 
 def last_transaction(session: Session, user_id: int) -> Transaction | None:
-    """El último movimiento registrado (el de id más alto), de cualquier tipo, origen y estado."""
+    """El último movimiento registrado (el de id más alto), de cualquier tipo y origen. Los recurrentes pendientes no
+    cuentan como "registrados" (aún no se confirmaron, se gestionan con /pendientes) ni los ya omitidos."""
     return session.scalar(
-        select(Transaction).where(Transaction.user_id == user_id).order_by(Transaction.id.desc()).limit(1)
+        select(Transaction)
+        .where(Transaction.user_id == user_id, Transaction.status == "confirmado")
+        .order_by(Transaction.id.desc())
+        .limit(1)
     )
+
+
+def undo_transaction(session: Session, user_id: int, transaction_id: int) -> tuple[str, str | None]:
+    """Deshace un movimiento: ("omitido", None) si viene de un recurrente, porque borrarlo haría que se volviera a
+    generar al día siguiente (omitido cuenta como "ya generado este mes" y no suma en totales); ("borrado", foto)
+    en cualquier otro caso."""
+    transaction = session.get(Transaction, transaction_id)
+    if transaction is None or transaction.user_id != user_id:
+        raise ValidationError("Ese movimiento ya no existe")
+    if transaction.recurring_expense_id is not None or transaction.recurring_income_id is not None:
+        if transaction.status == "omitido":
+            raise ValidationError("Ese movimiento ya estaba deshecho")
+        transaction.status = "omitido"
+        session.flush()
+        return "omitido", None
+    return "borrado", delete_transaction(session, user_id, transaction_id)
 
 
 def delete_transaction(session: Session, user_id: int, transaction_id: int) -> str | None:

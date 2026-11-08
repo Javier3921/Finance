@@ -73,6 +73,11 @@ def test_frases_de_ingreso(frase, monto, concepto):
     assert p is not None and p.amount == monto and p.concept == concepto and p.date == HOY
 
 
+def test_con_varias_cifras_el_monto_es_la_mayor():
+    assert parse_income_text("me pagaron el 15 1500", today=HOY).amount == 1500
+    assert parse_income_text("me pagaron 1500 el 15", today=HOY).amount == 1500
+
+
 def test_ingreso_de_ayer():
     assert parse_income_text("ayer me pagaron 300", today=HOY).date == HOY - dt.timedelta(days=1)
 
@@ -80,6 +85,8 @@ def test_ingreso_de_ayer():
 @pytest.mark.parametrize("frase", [
     "gasté 50 en almuerzo",
     "recibí la factura de luz y pagué 120",  # verbo de gasto: sigue siendo gasto
+    "recibí la factura de luz 120",  # "recibí" sin concepto de ingreso: no es ingreso
+    "recibi 50 de vuelto del taxi",
     "me pagaron",  # sin monto
     "taxi 15",
 ])

@@ -30,9 +30,12 @@ def build_application() -> Application:
 
     application = Application.builder().token(settings.telegram_bot_token).build()
 
-    # Grupo -1: corre antes que cualquier otro handler y corta los updates de
+    # Grupo -2: corre antes que cualquier otro handler y corta los updates de
     # chats que no están en ALLOWED_CHAT_IDS (ver app/bot/access.py).
-    application.add_handler(TypeHandler(Update, access.restrict_to_allowed_chats), group=-1)
+    application.add_handler(TypeHandler(Update, access.restrict_to_allowed_chats), group=-2)
+    # Grupo -1: la respuesta a "¿Cuál fue el monto real?" de un recurrente gana a cualquier flujo
+    # a medias del grupo 0; si el mensaje no responde a esa pregunta, sigue al grupo 0.
+    application.add_handler(recurring.reply_handler, group=-1)
 
     application.add_handler(CommandHandler("start", summary.start_command))
     application.add_handler(CommandHandler("presupuesto", summary.presupuesto_command))
@@ -47,7 +50,6 @@ def build_application() -> Application:
     application.add_handler(expense_flow.build_handler())
     for handler in income.build_handlers():
         application.add_handler(handler)
-    # Antes del texto libre: mientras se espera el monto real de un recurrente, ese texto es el monto.
     for handler in recurring.build_handlers():
         application.add_handler(handler)
     for handler in receipt.build_handlers():

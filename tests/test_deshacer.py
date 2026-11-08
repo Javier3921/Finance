@@ -121,6 +121,36 @@ def test_sin_movimientos(session, user, bot):
     assert pregunta.message.reply_text.call_args.args[0] == "No hay movimientos registrados que deshacer."
 
 
+def test_deshacer_un_recurrente_lo_omite_y_no_se_vuelve_a_generar(session, user, comida, bot):
+    from app.services import recurring as rs
+
+    r = rs.save_recurring_expense(session, user.id, name="Netflix", category_id=comida.id, amount=45, due_day=5,
+                                  auto_confirm=True)
+    r.created_at = dt.datetime(2026, 11, 1, 12, 0)
+    session.flush()
+    [tx] = rs.generar_vencidos(session, user.id, HOY)
+    assert last_transaction(session, user.id).id == tx.id
+
+    si = FakeUpdate(data=f"undo_yes:{tx.id}")
+    asyncio.run(undo.on_undo_yes(si, SimpleNamespace(user_data={})))
+
+    assert tx.status == "omitido"
+    assert "queda como omitido este mes" in si.callback_query.edit_message_text.call_args.args[0]
+    assert rs.generar_vencidos(session, user.id, HOY + dt.timedelta(days=1)) == []
+    assert last_transaction(session, user.id) is None  # lo omitido ya no se ofrece para deshacer
+
+
+def test_un_recurrente_pendiente_no_tapa_el_ultimo_gasto(session, user, comida, bot):
+    from app.services import recurring as rs
+
+    gasto = _gasto(session, user, 25)
+    r = rs.save_recurring_expense(session, user.id, name="Luz", category_id=comida.id, amount=80, due_day=5)
+    r.created_at = dt.datetime(2026, 11, 1, 12, 0)
+    session.flush()
+    rs.generar_vencidos(session, user.id, HOY)  # Luz pendiente, con id mayor
+    assert last_transaction(session, user.id).id == gasto.id
+
+
 def test_ingreso_se_describe_con_su_concepto(session, user):
     tx = create_transaction(session, user_id=user.id, kind="ingreso", description="Sueldo", amount=4500, date=HOY)
     assert undo.describir(tx) == "Ingreso de S/ 4,500 (Sueldo), 07/11/2026"

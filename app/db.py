@@ -54,12 +54,24 @@ def init_db() -> None:
 def _enable_rls() -> None:
     """En Postgres (Supabase), RLS activado en todas las tablas de la app, también las que `create_all` acaba de crear:
     una tabla nueva en `public` nace sin RLS y quedaría legible con la clave `anon` vía la API REST. Sin políticas a
-    propósito (ver auditoría en CLAUDE.md): el rol de la app es el dueño y no le afecta. Idempotente."""
+    propósito (ver auditoría en CLAUDE.md): el rol de la app es el dueño y no le afecta.
+
+    Solo se ejecuta ALTER en las tablas que aún no lo tienen: el ALTER pide un bloqueo exclusivo de la tabla, y el
+    dashboard llama a init_db() en cada proceso."""
     if engine.dialect.name != "postgresql":
         return
+    nombres = [t.name for t in Base.metadata.sorted_tables]
     with engine.begin() as conn:
-        for table in Base.metadata.sorted_tables:
-            conn.execute(text(f'ALTER TABLE "{table.name}" ENABLE ROW LEVEL SECURITY'))
+        sin_rls = conn.execute(
+            text(
+                "SELECT c.relname FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace "
+                "WHERE n.nspname = current_schema() AND c.relkind = 'r' AND NOT c.relrowsecurity "
+                "AND c.relname = ANY(:nombres)"
+            ),
+            {"nombres": nombres},
+        ).scalars().all()
+        for nombre in sin_rls:
+            conn.execute(text(f'ALTER TABLE "{nombre}" ENABLE ROW LEVEL SECURITY'))
 
 
 # Columnas agregadas a un modelo DESPUÉS de que alguien ya corrió `init_db()`
@@ -79,9 +91,11 @@ def _add_missing_columns() -> None:
             if table not in inspector.get_table_names():
                 continue
             existing = {c["name"] for c in inspector.get_columns(table)}
+            # IF NOT EXISTS en Postgres: el bot y el dashboard pueden arrancar a la vez tras un despliegue.
+            si_no_existe = "IF NOT EXISTS " if engine.dialect.name == "postgresql" else ""
             for name, coltype in columns:
                 if name not in existing:
-                    conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {name} {coltype}"))
+                    conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {si_no_existe}{name} {coltype}"))
 
 
 @contextmanager

@@ -231,3 +231,27 @@ def test_fecha_de_gasto_usa_la_hora_de_lima(monkeypatch, session, user, comida, 
 
     guardado = session.query(Transaction).filter_by(user_id=user.id).one()
     assert guardado.date == dt.date(2026, 10, 29)
+
+
+# ---- caducidad de la foto --------------------------------------------------------------------------------------------
+def test_foto_abandonada_se_borra_al_caducar(monkeypatch):
+    borradas = []
+    monkeypatch.setattr(receipt.storage, "delete_receipt", lambda ruta: borradas.append(ruta) or True)
+    context = SimpleNamespace(user_data={"receipt_path": "1/foto.jpg", "pasos": ["categoria"]})
+
+    asyncio.run(receipt.on_timeout(SimpleNamespace(), context))
+
+    assert borradas == ["1/foto.jpg"]
+    assert context.user_data == {}
+
+
+def test_los_flujos_paso_a_paso_caducan():
+    from app.bot import conversaciones
+    from app.bot.handlers import income
+
+    flujos = [expense_flow.build_handler(), income.build_handlers()[0], receipt.build_handlers()[0]]
+    assert {f.name: f.conversation_timeout for f in flujos} == {
+        "registrar_gasto": conversaciones.TIMEOUT_S,
+        "registrar_ingreso": conversaciones.TIMEOUT_S,
+        "registrar_gasto_foto": conversaciones.TIMEOUT_S,
+    }

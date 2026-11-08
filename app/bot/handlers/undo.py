@@ -1,4 +1,5 @@
-"""/deshacer: muestra el último movimiento registrado y lo borra solo si se pulsa "Sí, borrar".
+"""/deshacer: muestra el último movimiento registrado y lo borra solo si se pulsa "Sí, borrar". Si viene de un
+recurrente no se borra, queda omitido ese mes (ver `transactions.undo_transaction`).
 
 El botón lleva el id del movimiento que se mostró: un botón viejo nunca borra otro movimiento distinto del que se vio.
 La foto del comprobante se borra del bucket después de que el borrado en la base quedó confirmado.
@@ -14,7 +15,7 @@ from app.bot.formatting import money
 from app.db import get_session
 from app.models import Transaction
 from app.services import storage
-from app.services.transactions import ValidationError, delete_transaction, last_transaction
+from app.services.transactions import ValidationError, last_transaction, undo_transaction
 from app.services.users import get_or_create_user_for_chat
 
 logger = logging.getLogger(__name__)
@@ -59,13 +60,19 @@ async def on_undo_yes(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
             user = get_or_create_user_for_chat(session, update.effective_chat.id, update.effective_user.first_name or "Usuario")
             tx = session.get(Transaction, tx_id)
             texto = describir(tx) if tx is not None and tx.user_id == user.id else None
-            receipt_path = delete_transaction(session, user.id, tx_id)
-    except ValidationError:
-        await query.edit_message_text("Ese movimiento ya no existe. Usa /deshacer para ver el último.")
+            accion, receipt_path = undo_transaction(session, user.id, tx_id)
+    except ValidationError as exc:
+        await query.edit_message_text(f"{exc}. Usa /deshacer para ver el último.")
         return
 
     if receipt_path and not storage.delete_receipt(receipt_path):
         logger.warning("Movimiento %s borrado, pero no se pudo borrar su foto %s", tx_id, receipt_path)
+    if accion == "omitido":
+        await query.edit_message_text(
+            f"Deshecho: {texto}. Es un recurrente, así que queda como omitido este mes (no cuenta en los totales "
+            "y no se vuelve a generar).\nUsa /deshacer otra vez para el anterior."
+        )
+        return
     await query.edit_message_text(f"Borrado: {texto}.\nUsa /deshacer otra vez para borrar el anterior.")
 
 

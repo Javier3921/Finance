@@ -37,10 +37,12 @@ from telegram.ext import (
     ContextTypes,
     ConversationHandler,
     MessageHandler,
+    TypeHandler,
     filters,
 )
 
 from app.services.tiempo import hoy
+from app.bot import conversaciones
 from app.bot.formatting import money
 from app.bot.handlers.natural_language import handle_expense_text
 from app.db import get_session
@@ -325,6 +327,14 @@ async def on_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     return ConversationHandler.END
 
 
+async def on_timeout(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """El flujo de la foto caducó sin confirmar: la foto ya subida se borra del bucket, no queda huérfana."""
+    receipt_path = context.user_data.get("receipt_path")
+    if receipt_path:
+        storage.delete_receipt(receipt_path)
+    context.user_data.clear()
+
+
 def build_handlers() -> list:
     photo_flow = ConversationHandler(
         entry_points=[MessageHandler(filters.PHOTO & ~filters.CAPTION, start_photo_flow)],
@@ -348,8 +358,10 @@ def build_handlers() -> list:
                 CallbackQueryHandler(on_cancel, pattern=r"^receipt_cancel$"),
                 CallbackQueryHandler(on_back, pattern=r"^receipt_back$"),
             ],
+            ConversationHandler.TIMEOUT: [TypeHandler(Update, on_timeout)],
         },
         fallbacks=[CommandHandler("cancelar", on_cancel)],
+        conversation_timeout=conversaciones.TIMEOUT_S,
         name="registrar_gasto_foto",
     )
     return [

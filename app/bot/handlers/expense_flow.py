@@ -14,6 +14,7 @@ from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import CallbackQueryHandler, CommandHandler, ContextTypes, ConversationHandler, MessageHandler, filters
 
 from app.services.tiempo import hoy
+from app.bot import conversaciones
 from app.bot.formatting import money
 from app.db import get_session
 from app.models import Category, Subcategory
@@ -247,5 +248,6 @@ def build_handler() -> ConversationHandler:
             ],
         },
         fallbacks=[CommandHandler("cancelar", on_cancel)],
+        conversation_timeout=conversaciones.TIMEOUT_S,
         name="registrar_gasto",
     )

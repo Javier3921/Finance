@@ -99,11 +99,13 @@ def parse_expense_text(text: str, *, today: dt.date | None = None) -> ParsedExpe
 
 
 # ---------------------------------------------------------------------------------------------------------- ingresos
-# Solo frases con un verbo claro de ingreso. "Recibí" también aparece en gastos ("recibí la factura de luz"), así que
-# cualquier verbo de gasto en la frase gana y se trata como gasto, igual que hasta ahora.
+# Solo frases con un verbo claro de ingreso; cualquier verbo de gasto en la frase gana y se trata como gasto.
+# "Recibí" es ambiguo ("recibí la factura de luz 120", "recibí 50 de vuelto"): solo cuenta si además aparece un
+# concepto de ingreso (sueldo, reembolso…).
 _INCOME_RE = re.compile(
-    r"\b(cobre|me pagaron|me depositaron|me transfirieron|me yapearon|me plinearon|recibi|ingreso|ingresaron)\b"
+    r"\b(cobre|me pagaron|me depositaron|me transfirieron|me yapearon|me plinearon|ingreso|ingresaron)\b"
 )
+_RECIBI_RE = re.compile(r"\brecibi\b")
 _EXPENSE_VERBS_RE = re.compile(r"\b(gaste|pague|compre|gasto|pago)\b")
 
 # palabra clave -> concepto; el primero que aparezca gana. Sin ninguna: "Otro".
@@ -143,14 +145,17 @@ def parse_income_text(text: str, *, today: dt.date | None = None) -> ParsedIncom
     su camino como gasto)."""
     today = today or hoy()
     normalized = _strip_accents(text.lower())
-    if not _INCOME_RE.search(normalized) or _EXPENSE_VERBS_RE.search(normalized):
-        return None
-    amount_match = _AMOUNT_RE.search(normalized)
-    amount = parse_monto(amount_match.group(1)) if amount_match else None
-    if amount is None:
-        return None
     concept = next(
         (c for k, c in _INCOME_KEYWORDS.items() if re.search(rf"\b{re.escape(k)}\b", normalized)),
-        "Otro",
+        None,
     )
+    es_ingreso = _INCOME_RE.search(normalized) or (_RECIBI_RE.search(normalized) and concept is not None)
+    if not es_ingreso or _EXPENSE_VERBS_RE.search(normalized):
+        return None
+    # Con varias cifras ("me pagaron el 15 1500") el importe es la mayor: un día del mes nunca supera al monto.
+    montos = [m for m in (parse_monto(g.group(1)) for g in _AMOUNT_RE.finditer(normalized)) if m is not None]
+    if not montos:
+        return None
+    amount = max(montos)
+    concept = concept or "Otro"
     return ParsedIncome(amount=amount, concept=concept, date=_fecha_relativa(normalized, today), raw_text=text)
