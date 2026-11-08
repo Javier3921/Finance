@@ -19,7 +19,8 @@ COMMANDS_HELP = (
     "/gasto — registrar un gasto paso a paso\n"
     "/ingreso — registrar un ingreso (sueldo, freelance…)\n"
     "/presupuesto — cuánto llevas gastado por categoría este mes\n"
-    "/resumen — resumen del mes\n\n"
+    "/resumen — resumen del mes\n"
+    "/deshacer — borrar el último movimiento (con confirmación)\n\n"
     "También puedes escribirme directo, por ejemplo:\n"
     "\"Hoy gasté 35 soles en almuerzo\" o \"me pagaron 1500 del freelance\""
 )

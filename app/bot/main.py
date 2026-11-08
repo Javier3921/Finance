@@ -15,7 +15,7 @@ from telegram import Update
 from telegram.ext import Application, CommandHandler, TypeHandler
 
 from app.bot import access
-from app.bot.handlers import expense_flow, income, natural_language, receipt, summary
+from app.bot.handlers import expense_flow, income, natural_language, receipt, summary, undo
 from app.config import settings
 from app.db import init_db
 
@@ -36,6 +36,8 @@ def build_application() -> Application:
     application.add_handler(CommandHandler("start", summary.start_command))
     application.add_handler(CommandHandler("presupuesto", summary.presupuesto_command))
     application.add_handler(CommandHandler("resumen", summary.resumen_command))
+    for handler in undo.build_handlers():
+        application.add_handler(handler)
 
     # El flujo /gasto se registra ANTES que el handler de texto libre: mientras
     # una conversación /gasto está activa para ese chat, ConversationHandler

@@ -15,8 +15,8 @@ Detalle de cada punto y criterios de aceptación en [`SPEC.md`](SPEC.md). Marcar
 - [x] `/resumen` con ingresos y balance
 
 ## Fase 3 — /deshacer
-- [ ] Servicio para borrar el último movimiento (con desglose y foto)
-- [ ] Comando con confirmación por botones
+- [x] Servicio para borrar el último movimiento (con desglose y foto)
+- [x] Comando con confirmación por botones
 
 ## Fase 4 — Recurrentes
 - [ ] Servicio: vencimiento (quincena, fin de mes, día específico) y generación sin duplicados

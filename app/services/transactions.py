@@ -184,3 +184,22 @@ def list_transactions(
         stmt = stmt.where(Transaction.receipt_path.is_(None))
     stmt = stmt.order_by(Transaction.date.desc(), Transaction.id.desc())
     return list(session.scalars(stmt))
+
+
+def last_transaction(session: Session, user_id: int) -> Transaction | None:
+    """El último movimiento registrado (el de id más alto), de cualquier tipo, origen y estado."""
+    return session.scalar(
+        select(Transaction).where(Transaction.user_id == user_id).order_by(Transaction.id.desc()).limit(1)
+    )
+
+
+def delete_transaction(session: Session, user_id: int, transaction_id: int) -> str | None:
+    """Borra el movimiento con su desglose y su detalle de inversión (cascade del modelo). Devuelve la ruta de su foto,
+    si tenía, para que quien llama la borre del bucket DESPUÉS de confirmar el borrado en la base."""
+    transaction = session.get(Transaction, transaction_id)
+    if transaction is None or transaction.user_id != user_id:
+        raise ValidationError("Ese movimiento ya no existe")
+    receipt_path = transaction.receipt_path
+    session.delete(transaction)
+    session.flush()
+    return receipt_path
