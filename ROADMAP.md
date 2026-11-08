@@ -3,16 +3,16 @@
 Detalle de cada punto y criterios de aceptación en [`SPEC.md`](SPEC.md). Marcar al terminar cada bloque.
 
 ## Fase 1 — CI (primero, para que las demás fases ya se comprueben solas)
-- [ ] Workflow de tests con Python 3.10 y 3.12
-- [ ] Insignia en el README
-- [ ] Comprobar verde y rojo en GitHub
+- [x] Workflow de tests con Python 3.10 y 3.12
+- [x] Insignia en el README
+- [x] Comprobar en GitHub: verde en 3.10 y 3.12 (`a2f8c0f`). El rojo no se forzó para no romper `main`
 
 ## Fase 2 — Ingresos reales
-- [ ] Tipo `ingreso` en el modelo y validaciones del servicio
-- [ ] `/ingreso` paso a paso
-- [ ] Frases de ingreso en texto libre (`nlp.py`)
-- [ ] Dashboard: ingresos, balance y tasa de ahorro; quitar el placeholder de "Ingreso mensual"
-- [ ] `/resumen` con ingresos y balance
+- [x] Tipo `ingreso` en el modelo y validaciones del servicio
+- [x] `/ingreso` paso a paso
+- [x] Frases de ingreso en texto libre (`nlp.py`)
+- [x] Dashboard: ingresos, balance y tasa de ahorro; quitar el placeholder de "Ingreso mensual" (verificado con `AppTest` sobre una base de demo; sin capturas: no había navegador)
+- [x] `/resumen` con ingresos y balance
 
 ## Fase 3 — /deshacer
 - [ ] Servicio para borrar el último movimiento (con desglose y foto)

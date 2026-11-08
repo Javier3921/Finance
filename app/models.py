@@ -41,7 +41,7 @@ MONEY = Numeric(12, 2)
 # Valores permitidos (documentados aquí; validados en la capa de servicios,
 # no como ENUM de base de datos, para no atarnos al dialecto de SQLite vs.
 # Postgres y poder agregar un valor nuevo sin migración).
-TRANSACTION_KINDS = ("gasto", "ahorro", "inversion")
+TRANSACTION_KINDS = ("gasto", "ahorro", "inversion", "ingreso")
 GASTO_TYPES = ("fijo", "variable")
 TRANSACTION_STATUSES = ("confirmado", "pendiente", "omitido")
 TRANSACTION_SOURCES = ("manual", "bot_texto", "bot_foto", "recurrente")
@@ -169,7 +169,7 @@ class Transaction(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
-    kind: Mapped[str] = mapped_column(String(20))  # gasto | ahorro | inversion
+    kind: Mapped[str] = mapped_column(String(20))  # gasto | ahorro | inversion | ingreso
     gasto_type: Mapped[str | None] = mapped_column(String(20), nullable=True)  # fijo | variable (solo si kind=gasto)
     category_id: Mapped[int | None] = mapped_column(ForeignKey("categories.id"), nullable=True)
     subcategory_id: Mapped[int | None] = mapped_column(ForeignKey("subcategories.id"), nullable=True)

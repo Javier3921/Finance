@@ -1,5 +1,5 @@
 """Panel de configuración — editar categorías, subcategorías, presupuestos,
-métodos de pago e ingreso mensual SIN tocar código.
+métodos de pago y ajustes SIN tocar código; dashboard con gastos, ingresos y balance.
 
 Corre sobre la misma base de datos que usa el bot: un cambio hecho aquí se
 ve de inmediato la próxima vez que hables con el bot.
@@ -50,6 +50,7 @@ from app.bot.formatting import STATUS_LABEL
 from app.services.tiempo import hoy
 from app.config import settings
 from app.db import get_session, init_db
+from app.services import balance as balance_service
 from app.services import budgets as budgets_service
 from app.services import config as config_service
 from app.services import settings as settings_service
@@ -191,6 +192,21 @@ with tab_dashboard:
         dash_user_id = get_default_user(session).id
     df_todo = _gastos(dash_user_id, dash_start, dash_end)
     df_ant_todo = _gastos(dash_user_id, ant_start, ant_end)
+
+    # Balance del rango (sin los filtros de categoría: es la foto completa de ingresos y salidas).
+    with get_session() as session:
+        bal = balance_service.calcular_balance(session, dash_user_id, dash_start, dash_end)
+        bal_ant = balance_service.calcular_balance(session, dash_user_id, ant_start, ant_end)
+    b1, b2, b3, b4 = st.columns(4)
+    b1.metric("Ingresos", f"S/ {bal.ingresos:,.0f}", delta=_variacion(float(bal.ingresos), float(bal_ant.ingresos)))
+    b2.metric("Ahorro + inversión", f"S/ {bal.ahorro_inversion:,.0f}")
+    b3.metric("Balance", f"S/ {bal.balance:,.0f}", help="Ingresos − gastos − ahorro − inversión del rango.")
+    b4.metric(
+        "Tasa de ahorro", f"{bal.tasa_ahorro:.0f}%" if bal.tasa_ahorro is not None else "—",
+        help="Porcentaje de los ingresos del rango que no se gastó. «—» si no hay ingresos registrados.",
+    )
+    if bal.ingresos == 0:
+        st.caption("Sin ingresos registrados en este rango: regístralos con /ingreso en el bot.")
 
     if df_todo.empty:
         st.info("No hay gastos registrados en este rango todavía.")
@@ -654,10 +670,6 @@ with tab_ajustes:
         current_settings = settings_service.all_settings(session, user.id)
 
     with st.form("settings_form"):
-        income = st.number_input(
-            "Ingreso mensual (S/)", min_value=0.0, step=50.0, value=float(current_settings["monthly_income"]),
-            help="Se usa para calcular cuánto queda 'disponible' en los resúmenes.",
-        )
         st.write("Umbrales de alerta de presupuesto (% usado)")
         c1, c2, c3 = st.columns(3)
         aviso = c1.number_input("Aviso desde", min_value=0, max_value=200, value=int(float(current_settings["budget_aviso_pct"])))
@@ -670,7 +682,6 @@ with tab_ajustes:
             else:
                 def _save_settings(s):
                     u = get_default_user(s)
-                    settings_service.set_setting(s, u.id, "monthly_income", str(income))
                     settings_service.set_setting(s, u.id, "budget_aviso_pct", str(aviso))
                     settings_service.set_setting(s, u.id, "budget_alerta_pct", str(alerta))
                     settings_service.set_setting(s, u.id, "budget_excedido_pct", str(excedido))

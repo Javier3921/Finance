@@ -9,6 +9,7 @@ from telegram.ext import ContextTypes
 from app.services.tiempo import hoy
 from app.bot.formatting import budget_line, money
 from app.db import get_session
+from app.services.balance import calcular_balance
 from app.services.budgets import category_budget_statuses
 from app.services.transactions import list_transactions
 from app.services.users import get_or_create_user_for_chat
@@ -16,10 +17,11 @@ from app.services.users import get_or_create_user_for_chat
 COMMANDS_HELP = (
     "Puedo ayudarte a llevar tus finanzas. Comandos disponibles:\n\n"
     "/gasto — registrar un gasto paso a paso\n"
+    "/ingreso — registrar un ingreso (sueldo, freelance…)\n"
     "/presupuesto — cuánto llevas gastado por categoría este mes\n"
     "/resumen — resumen del mes\n\n"
     "También puedes escribirme directo, por ejemplo:\n"
-    "\"Hoy gasté 35 soles en almuerzo\""
+    "\"Hoy gasté 35 soles en almuerzo\" o \"me pagaron 1500 del freelance\""
 )
 
 
@@ -54,18 +56,23 @@ async def resumen_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         ahorros_inversion = [
             t for t in list_transactions(session, user.id, month_start, today) if t.kind in ("ahorro", "inversion")
         ]
+        n_ingresos = len(list_transactions(session, user.id, month_start, today, kind="ingreso"))
+        balance = calcular_balance(session, user.id, month_start, today)
 
     total_gastado = sum(float(t.amount) for t in gastos)
     total_ahorro_inv = sum(float(t.amount) for t in ahorros_inversion)
     fijos = sum(float(t.amount) for t in gastos if t.gasto_type == "fijo")
     variables = sum(float(t.amount) for t in gastos if t.gasto_type == "variable")
 
+    tasa = f"{balance.tasa_ahorro:.0f}%" if balance.tasa_ahorro is not None else "—"
     lines = [
         f"Resumen de {today.strftime('%B %Y')}:",
+        f"Ingresos: {money(balance.ingresos)}",
         f"Gasto fijo: {money(fijos)}",
         f"Gasto variable: {money(variables)}",
         f"Total gastado: {money(total_gastado)}",
         f"Ahorro + inversión: {money(total_ahorro_inv)}",
-        f"\nMovimientos registrados: {len(gastos) + len(ahorros_inversion)}",
+        f"Balance: {money(balance.balance)} · Tasa de ahorro: {tasa}",
+        f"\nMovimientos registrados: {len(gastos) + len(ahorros_inversion) + n_ingresos}",
     ]
     await update.message.reply_text("\n".join(lines))

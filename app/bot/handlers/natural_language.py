@@ -23,6 +23,7 @@ from telegram.ext import CallbackQueryHandler, ContextTypes, MessageHandler, fil
 
 from app.services.tiempo import hoy
 from app.bot.formatting import money
+from app.bot.handlers import income
 from app.db import get_session
 from app.models import Category
 from app.services import storage
@@ -119,6 +120,9 @@ async def handle_expense_text(
 
 
 async def on_free_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    # Primero, por si es un ingreso ("me pagaron 1500"); solo frases con un verbo claro de ingreso, ver nlp.py.
+    if await income.try_handle_free_text(update, context, update.message.text):
+        return
     await handle_expense_text(update, context, update.message.text)
 
 

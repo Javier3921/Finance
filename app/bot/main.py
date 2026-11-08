@@ -15,7 +15,7 @@ from telegram import Update
 from telegram.ext import Application, CommandHandler, TypeHandler
 
 from app.bot import access
-from app.bot.handlers import expense_flow, natural_language, receipt, summary
+from app.bot.handlers import expense_flow, income, natural_language, receipt, summary
 from app.config import settings
 from app.db import init_db
 
@@ -41,6 +41,8 @@ def build_application() -> Application:
     # una conversación /gasto está activa para ese chat, ConversationHandler
     # intercepta el mensaje y el handler de lenguaje natural no llega a verlo.
     application.add_handler(expense_flow.build_handler())
+    for handler in income.build_handlers():
+        application.add_handler(handler)
     for handler in receipt.build_handlers():
         application.add_handler(handler)
     for handler in natural_language.build_handlers():

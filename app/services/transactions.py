@@ -1,4 +1,4 @@
-"""Alta y consulta de movimientos (gasto / ahorro / inversión)."""
+"""Alta y consulta de movimientos (gasto / ahorro / inversión / ingreso)."""
 from __future__ import annotations
 
 import datetime as dt
@@ -89,6 +89,11 @@ def create_transaction(
         raise ValidationError(f"Tipo de movimiento inválido: {kind!r}")
     if kind == "gasto" and gasto_type not in GASTO_TYPES:
         raise ValidationError("Un gasto debe indicar si es 'fijo' o 'variable'")
+    if kind == "ingreso" and (category_name or subcategory_name or gasto_type):
+        # Las categorías y presupuestos son de gasto: un ingreso solo lleva concepto (description).
+        raise ValidationError("Un ingreso no lleva categoría ni tipo de gasto")
+    if not str(description or "").strip():
+        raise ValidationError("El movimiento necesita una descripción")
     if amount is None or _decimal(amount, "El monto") <= 0:
         raise ValidationError("El monto debe ser mayor a cero")
 
